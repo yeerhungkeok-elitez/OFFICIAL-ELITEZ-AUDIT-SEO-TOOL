@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SEO Audit Tool — Elitez Group of Companies</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── HEADER ─────────────────────────────────────────────────── -->
+  <!--
+    Logo display: the inline SVG below faithfully recreates the Elitez
+    logo using geometric shapes and Elitez brand colours.
+
+    To use your actual PNG logo file instead:
+      1. Copy elitez-logo.png into the /public folder
+      2. Replace the <svg class="logo-svg"> block with:
+         <img src="elitez-logo.png" alt="Elitez Group of Companies" class="logo-img" />
+  -->
+  <header class="header">
+    <div class="header-inner">
+
+      <!-- Elitez logo (inline SVG recreation) -->
+      <a href="/" class="logo-link" aria-label="Elitez Group of Companies">
+        <svg class="logo-svg" xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 340 82" role="img" aria-label="Elitez Group of Companies">
+          <title>Elitez Group of Companies</title>
+
+          <!-- ── Letter E ── -->
+          <g transform="translate(0,4)">
+            <rect x="0"  y="0"  width="11" height="57" fill="#E87520"/><!-- left post -->
+            <rect x="0"  y="0"  width="38" height="11" fill="#E87520"/><!-- top bar -->
+            <rect x="0"  y="23" width="30" height="10" fill="#E87520"/><!-- mid bar -->
+            <rect x="0"  y="46" width="38" height="11" fill="#E87520"/><!-- bot bar -->
+          </g>
+
+          <!-- ── Letter L ── -->
+          <g transform="translate(56,4)">
+            <rect x="0" y="0"  width="11" height="57" fill="#E87520"/>
+            <rect x="0" y="46" width="38" height="11" fill="#E87520"/>
+          </g>
+
+          <!-- ── Letter I ── -->
+          <g transform="translate(112,4)">
+            <rect x="0" y="0" width="11" height="57" fill="#E87520"/>
+          </g>
+
+          <!-- ── T-person icon (navy) ── -->
+          <g transform="translate(141,0)">
+            <!-- head -->
+            <circle cx="25" cy="7"  r="7"   fill="#1A2B4A"/>
+            <!-- horizontal arm bar -->
+            <rect x="0"  y="18" width="50" height="11" fill="#1A2B4A"/>
+            <!-- vertical body bar -->
+            <rect x="20" y="18" width="11" height="43" fill="#1A2B4A"/>
+          </g>
+
+          <!-- ── Letter E ── -->
+          <g transform="translate(209,4)">
+            <rect x="0"  y="0"  width="11" height="57" fill="#E87520"/>
+            <rect x="0"  y="0"  width="38" height="11" fill="#E87520"/>
+            <rect x="0"  y="23" width="30" height="10" fill="#E87520"/>
+            <rect x="0"  y="46" width="38" height="11" fill="#E87520"/>
+          </g>
+
+          <!-- ── Letter Z ── -->
+          <g transform="translate(265,4)">
+            <!-- top bar -->
+            <rect x="0" y="0"  width="38" height="11" fill="#E87520"/>
+            <!-- diagonal — line endpoint chosen so it merges cleanly with bars -->
+            <line x1="37" y1="11" x2="1" y2="46"
+                  stroke="#E87520" stroke-width="12" stroke-linecap="butt"/>
+            <!-- bottom bar -->
+            <rect x="0" y="46" width="38" height="11" fill="#E87520"/>
+          </g>
+
+          <!-- ── Subtitle ── -->
+          <text x="170" y="78"
+                text-anchor="middle"
+                font-family="Inter, Arial, sans-serif"
+                font-weight="700"
+                font-size="9"
+                fill="#1A2B4A"
+                letter-spacing="3.8">GROUP OF COMPANIES</text>
+        </svg>
+      </a>
+
+      <!-- Tool label -->
+      <div class="header-tool-label">
+        <span class="header-tool-name">SEO Audit Tool</span>
+        <span class="header-tool-sub">Site-Wide Crawler</span>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ── SCAN BAR ───────────────────────────────────────────────── -->
+  <div class="scan-bar">
+    <div class="scan-bar-inner">
+      <form id="audit-form">
+        <div class="url-row">
+          <div class="url-field">
+            <span class="url-prefix">
+              <!-- magnifier icon -->
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
+                <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <input
+              id="url-input"
+              type="text"
+              placeholder="https://example.com"
+              spellcheck="false"
+              autofocus
+            />
+          </div>
+          <div class="options-row">
+            <label class="opt-label" for="max-pages">Max pages</label>
+            <input id="max-pages" type="number" value="50" min="1" max="100" class="opt-input" />
+            <button type="submit" id="scan-btn">
+              <span id="btn-label">Crawl Site</span>
+            </button>
+            <button type="button" id="stop-btn" style="display:none">Stop crawl</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── MAIN ───────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Empty state -->
+    <div id="view-empty" class="view">
+      <div class="empty-state-card">
+        <div class="empty-icon-wrap">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+            <circle cx="18" cy="18" r="13" stroke="#E87520" stroke-width="2.5"/>
+            <line x1="28" y1="28" x2="37" y2="37" stroke="#E87520" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h2>Enter a website URL to begin</h2>
+        <p>The crawler follows internal links and audits every page it finds — up to your page limit. No API key required.</p>
+        <div class="feature-grid">
+          <div class="feature-item">
+            <span class="fi-icon">📄</span>
+            <div>
+              <strong>On-Page SEO</strong>
+              <span>Title, meta description, H1, canonical, noindex</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="fi-icon">✍️</span>
+            <div>
+              <strong>Content Quality</strong>
+              <span>Word count, headings, image alt text, schema, Open Graph</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="fi-icon">⚙️</span>
+            <div>
+              <strong>Technical SEO</strong>
+              <span>HTTPS, mobile viewport, page speed, render-blocking</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="fi-icon">🕷️</span>
+            <div>
+              <strong>Crawlability</strong>
+              <span>Internal links, robots.txt, sitemap.xml, broken links</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="fi-icon">💡</span>
+            <div>
+              <strong>Conversion</strong>
+              <span>CTAs, forms, trust signals, messaging clarity</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="fi-icon">📊</span>
+            <div>
+              <strong>Weighted Scores</strong>
+              <span>Realistic 0–100 scores based on issue severity</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Crawling state -->
+    <div id="view-crawling" class="view" style="display:none">
+      <div class="crawl-status-card">
+        <div class="crawl-header">
+          <div class="spinner"></div>
+          <div>
+            <h2 id="crawl-headline">Starting crawl…</h2>
+            <p id="crawl-subline" class="muted">Reading sitemap.xml and robots.txt</p>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-nums">
+            <span id="progress-label">0 pages scanned</span>
+            <span id="progress-queue" class="muted"></span>
+          </div>
+        </div>
+      </div>
+      <div id="live-results"></div>
+    </div>
+
+    <!-- Error state -->
+    <div id="view-error" class="view" style="display:none">
+      <div class="error-box">
+        <div class="error-icon-wrap">⚠️</div>
+        <h3>Crawl failed</h3>
+        <p id="error-msg"></p>
+        <button onclick="resetUI()" class="btn-secondary">Try again</button>
+      </div>
+    </div>
+
+    <!-- Results state -->
+    <div id="view-results" class="view" style="display:none">
+
+      <div class="summary-row">
+        <div class="summary-url-wrap">
+          <div class="summary-url" id="res-url"></div>
+          <div class="summary-meta muted" id="res-meta"></div>
+        </div>
+        <button onclick="resetUI()" class="btn-secondary">New crawl</button>
+      </div>
+
+      <div class="score-cards">
+        <div class="score-card score-card-primary">
+          <div class="sc-label">Overall Score</div>
+          <div class="sc-num" id="sc-overall">—</div>
+          <div class="sc-bar-track"><div class="sc-bar" id="bar-overall"></div></div>
+          <div class="sc-tier" id="tier-overall"></div>
+        </div>
+        <div class="score-card score-card-primary">
+          <div class="sc-label">SEO Score</div>
+          <div class="sc-num" id="sc-seo">—</div>
+          <div class="sc-bar-track"><div class="sc-bar" id="bar-seo"></div></div>
+          <div class="sc-tier" id="tier-seo"></div>
+        </div>
+        <div class="score-card">
+          <div class="sc-label">Pages Scanned</div>
+          <div class="sc-num sc-neutral" id="sc-pages">—</div>
+          <div class="sc-sub" id="sc-pages-sub"></div>
+        </div>
+        <div class="score-card sc-counts">
+          <div class="count-item">
+            <span class="dot dot-fail"></span>
+            <strong id="cnt-fail">0</strong><span class="count-word"> errors</span>
+          </div>
+          <div class="count-item">
+            <span class="dot dot-warn"></span>
+            <strong id="cnt-warn">0</strong><span class="count-word"> warnings</span>
+          </div>
+          <div class="count-item">
+            <span class="dot dot-pass"></span>
+            <strong id="cnt-pass">0</strong><span class="count-word"> passed</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab bar -->
+      <div class="tab-bar">
+        <button class="tab active" data-tab="issues">Issues by Type</button>
+        <button class="tab" data-tab="pages">Pages</button>
+      </div>
+
+      <div id="tab-issues" class="tab-content"></div>
+      <div id="tab-pages"  class="tab-content" style="display:none"></div>
+
+    </div><!-- /view-results -->
+  </main>
+
+  <footer class="footer">
+    <span class="footer-logo">Elitez Group of Companies</span>
+    <span>SEO Audit Tool · Internal Use</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
