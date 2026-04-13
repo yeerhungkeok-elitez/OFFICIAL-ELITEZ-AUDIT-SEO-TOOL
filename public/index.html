@@ -98,6 +98,20 @@
     </div>
   </header>
 
+  <!-- ── APP NAVIGATION ───────────────────────────────────────────── -->
+  <nav class="app-nav">
+    <div class="app-nav-inner">
+      <button class="app-tab active" data-section="technical">Technical Audit</button>
+      <button class="app-tab" data-section="search-performance">Search Performance</button>
+      <span class="app-tab app-tab-soon">Keyword Tracker<span class="soon-badge">Phase 2</span></span>
+      <span class="app-tab app-tab-soon">Opportunities<span class="soon-badge">Phase 3</span></span>
+      <span class="app-tab app-tab-soon">Competitor Analysis<span class="soon-badge">Phase 4</span></span>
+    </div>
+  </nav>
+
+  <!-- ── SECTION: TECHNICAL AUDIT ─────────────────────────────────── -->
+  <div id="section-technical" class="app-section">
+
   <!-- ── SCAN BAR ───────────────────────────────────────────────── -->
   <div class="scan-bar">
     <div class="scan-bar-inner">
@@ -282,6 +296,125 @@
 
     </div><!-- /view-results -->
   </main>
+
+  </div><!-- /section-technical -->
+
+  <!-- ── SECTION: SEARCH PERFORMANCE ──────────────────────────────── -->
+  <div id="section-search-performance" class="app-section" style="display:none">
+    <div class="gsc-wrap">
+
+      <!-- Loading -->
+      <div id="gsc-loading" class="gsc-state">
+        <div class="gsc-center">
+          <div class="spinner"></div>
+          <span class="muted" style="margin-left:10px">Checking connection…</span>
+        </div>
+      </div>
+
+      <!-- Not configured: no GSC credentials in .env -->
+      <div id="gsc-setup" class="gsc-state" style="display:none">
+        <div class="setup-card">
+          <div class="setup-icon">🔑</div>
+          <h2>Set Up Google Search Console</h2>
+          <p class="setup-intro">Pull real search data — queries, rankings, clicks, and CTR — directly from Google. No third-party tools. No API limits beyond Google's own.</p>
+          <ol class="setup-steps">
+            <li>
+              <strong>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a></strong>
+              <span>Create a new project (or use an existing one)</span>
+            </li>
+            <li>
+              <strong>Enable the Google Search Console API</strong>
+              <span>APIs &amp; Services → Library → search "Search Console API" → Enable</span>
+            </li>
+            <li>
+              <strong>Create OAuth 2.0 credentials</strong>
+              <span>Credentials → Create Credentials → OAuth client ID → Web application</span>
+            </li>
+            <li>
+              <strong>Add the redirect URI</strong>
+              <code class="setup-code">http://localhost:3000/auth/google/callback</code>
+            </li>
+            <li>
+              <strong>Add credentials to your <code>.env</code> file, then restart the server</strong>
+              <code class="setup-code">GSC_CLIENT_ID=your_client_id<br>GSC_CLIENT_SECRET=your_client_secret</code>
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Configured but not yet connected -->
+      <div id="gsc-connect" class="gsc-state" style="display:none">
+        <div class="connect-card">
+          <svg class="google-logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.29-8.16 2.29-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          <h2>Connect Google Search Console</h2>
+          <p>Sign in with the Google account that has access to your Search Console properties. You'll only need to do this once — tokens are saved locally.</p>
+          <div id="gsc-connect-error" class="gsc-error-banner" style="display:none"></div>
+          <a href="/auth/google" class="btn-google">
+            <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.29-8.16 2.29-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Sign in with Google
+          </a>
+          <p class="connect-note">Read-only access to Search Console data. We never modify your account or data.</p>
+        </div>
+      </div>
+
+      <!-- Connected: show data UI -->
+      <div id="gsc-data" class="gsc-state" style="display:none">
+
+        <!-- Toolbar -->
+        <div class="gsc-toolbar">
+          <div class="gsc-toolbar-left">
+            <div class="gsc-field">
+              <label class="gsc-label" for="gsc-property">Property</label>
+              <select id="gsc-property" class="gsc-select"></select>
+            </div>
+            <div class="gsc-field">
+              <label class="gsc-label">Date range</label>
+              <div class="date-btns">
+                <button class="dbt" data-days="7">7d</button>
+                <button class="dbt active" data-days="28">28d</button>
+                <button class="dbt" data-days="90">3m</button>
+                <button class="dbt" data-days="180">6m</button>
+                <button class="dbt" data-days="365">12m</button>
+              </div>
+            </div>
+            <div class="gsc-field">
+              <label class="gsc-label">Group by</label>
+              <div class="dim-checks">
+                <label class="dim-label"><input type="checkbox" name="gsc-dim" value="query" checked> Query</label>
+                <label class="dim-label"><input type="checkbox" name="gsc-dim" value="page" checked> Page</label>
+                <label class="dim-label"><input type="checkbox" name="gsc-dim" value="country" checked> Country</label>
+                <label class="dim-label"><input type="checkbox" name="gsc-dim" value="device"> Device</label>
+              </div>
+            </div>
+          </div>
+          <div class="gsc-toolbar-right">
+            <button id="gsc-load-btn" class="btn-primary">Load Data</button>
+            <button id="gsc-disconnect-btn" class="btn-ghost">Disconnect</button>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div id="gsc-results">
+          <div class="gsc-prompt">
+            <p>Select a property and date range, then click <strong>Load Data</strong>.</p>
+            <p class="muted" style="font-size:11px;margin-top:4px">Note: Search Console data has a 2–3 day processing lag.</p>
+          </div>
+        </div>
+
+      </div><!-- /gsc-data -->
+
+    </div><!-- /gsc-wrap -->
+  </div><!-- /section-search-performance -->
 
   <footer class="footer">
     <span class="footer-logo">Elitez Group of Companies</span>

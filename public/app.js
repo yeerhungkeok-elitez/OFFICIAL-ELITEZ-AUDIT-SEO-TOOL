@@ -502,3 +502,278 @@ function resetUI() {
   resetScanBtn();
   $('url-input').focus();
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TOP-LEVEL SECTION NAVIGATION
+// ═════════════════════════════════════════════════════════════════════════════
+
+(function initSectionNav() {
+  const tabs = document.querySelectorAll('.app-tab[data-section]');
+
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+
+      const target = btn.dataset.section;
+      document.querySelectorAll('.app-section').forEach(s => {
+        s.style.display = s.id === `section-${target}` ? '' : 'none';
+      });
+
+      if (target === 'search-performance' && !gscInitialized) initGSC();
+    });
+  });
+
+  // Handle ?section= redirect from OAuth callback
+  const params  = new URLSearchParams(location.search);
+  const section = params.get('section');
+  const gscErr  = params.get('gsc_error');
+  if (section) {
+    const tab = document.querySelector(`.app-tab[data-section="${section}"]`);
+    if (tab) tab.click();
+    history.replaceState({}, '', '/');
+  }
+  // Surface OAuth errors in the connect card once GSC tab is active
+  if (gscErr) {
+    window._pendingGSCError = decodeURIComponent(gscErr);
+  }
+})();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GOOGLE SEARCH CONSOLE
+// ═════════════════════════════════════════════════════════════════════════════
+
+let gscInitialized = false;
+let gscRows        = [];   // last fetched rows (for re-sorting)
+let gscDims        = [];   // active dimensions during last fetch
+let gscSortKey     = 'clicks';
+let gscSortDir     = -1;   // -1 = descending
+
+// ── Country code → display name ───────────────────────────────────────────────
+const COUNTRY_NAMES = {
+  usa:'United States', gbr:'United Kingdom', aus:'Australia', can:'Canada',
+  ind:'India', deu:'Germany', fra:'France', sgp:'Singapore', mys:'Malaysia',
+  phl:'Philippines', nzl:'New Zealand', irl:'Ireland', zaf:'South Africa',
+  nld:'Netherlands', bra:'Brazil', esp:'Spain', ita:'Italy', jpn:'Japan',
+  kor:'South Korea', idn:'Indonesia', pak:'Pakistan', bgd:'Bangladesh',
+  mex:'Mexico', arg:'Argentina', sau:'Saudi Arabia', are:'United Arab Emirates',
+  chn:'China', rus:'Russia', ukr:'Ukraine', pol:'Poland', swe:'Sweden',
+  che:'Switzerland', bel:'Belgium', aut:'Austria', nor:'Norway', dnk:'Denmark',
+  fin:'Finland', prt:'Portugal', grc:'Greece', cze:'Czech Republic',
+  rou:'Romania', hun:'Hungary', tha:'Thailand', vnm:'Vietnam', lka:'Sri Lanka',
+  egy:'Egypt', nga:'Nigeria', ken:'Kenya', gha:'Ghana', tza:'Tanzania',
+};
+const countryName = code => COUNTRY_NAMES[code?.toLowerCase()] || (code || '').toUpperCase();
+
+// ── State management ──────────────────────────────────────────────────────────
+async function initGSC() {
+  showGSCState('loading');
+  try {
+    const res  = await fetch('/api/gsc/status');
+    const data = await res.json();
+
+    if (!data.hasCredentials) {
+      showGSCState('setup');
+    } else if (!data.connected) {
+      showGSCState('connect');
+      // Show any OAuth error that came back in the redirect
+      if (window._pendingGSCError) {
+        const el = document.getElementById('gsc-connect-error');
+        if (el) { el.textContent = window._pendingGSCError; el.style.display = ''; }
+        delete window._pendingGSCError;
+      }
+    } else {
+      showGSCState('data');
+      await loadGSCSites();
+    }
+  } catch {
+    showGSCState('setup');
+  }
+  gscInitialized = true;
+}
+
+function showGSCState(state) {
+  ['loading', 'setup', 'connect', 'data'].forEach(s => {
+    const el = document.getElementById(`gsc-${s}`);
+    if (el) el.style.display = s === state ? '' : 'none';
+  });
+}
+
+// ── Property list ─────────────────────────────────────────────────────────────
+async function loadGSCSites() {
+  const sel = document.getElementById('gsc-property');
+  sel.innerHTML = '<option>Loading…</option>';
+  try {
+    const res   = await fetch('/api/gsc/sites');
+    const { sites, error } = await res.json();
+    if (error) throw new Error(error);
+    if (!sites || sites.length === 0) {
+      sel.innerHTML = '<option value="">No verified properties found</option>';
+      return;
+    }
+    sel.innerHTML = sites.map(s =>
+      `<option value="${esc(s.siteUrl)}">${esc(s.siteUrl)}</option>`
+    ).join('');
+  } catch (err) {
+    sel.innerHTML = '<option value="">Error loading properties</option>';
+    showGSCError(err.message);
+  }
+}
+
+// ── Toolbar wiring ────────────────────────────────────────────────────────────
+document.getElementById('gsc-load-btn')?.addEventListener('click', fetchGSCData);
+
+document.getElementById('gsc-disconnect-btn')?.addEventListener('click', async () => {
+  await fetch('/api/gsc/logout', { method: 'POST' });
+  gscInitialized = false;
+  gscRows = [];
+  showGSCState('loading');
+  setTimeout(initGSC, 0);
+});
+
+document.querySelectorAll('.dbt').forEach(btn => {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.dbt').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// ── Fetch data ────────────────────────────────────────────────────────────────
+async function fetchGSCData() {
+  const siteUrl = document.getElementById('gsc-property')?.value;
+  if (!siteUrl) return;
+
+  gscDims = [...document.querySelectorAll('input[name="gsc-dim"]:checked')].map(c => c.value);
+  if (gscDims.length === 0) { alert('Select at least one dimension.'); return; }
+
+  const days = parseInt(document.querySelector('.dbt.active')?.dataset.days || '28');
+
+  // GSC data has a ~2-3 day processing lag — shift the window back
+  const end   = new Date(); end.setDate(end.getDate() - 3);
+  const start = new Date(end.getTime() - (days - 1) * 86_400_000);
+  const fmt   = d => d.toISOString().slice(0, 10);
+
+  const resultsEl = document.getElementById('gsc-results');
+  resultsEl.innerHTML = '<div class="gsc-center" style="padding:40px"><div class="spinner"></div><span style="margin-left:10px;color:var(--muted)">Fetching data…</span></div>';
+
+  try {
+    const res = await fetch('/api/gsc/query', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ siteUrl, startDate: fmt(start), endDate: fmt(end), dimensions: gscDims, rowLimit: 1000 }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.statusText);
+
+    gscRows    = body.rows || [];
+    gscSortKey = 'clicks';
+    gscSortDir = -1;
+    renderGSCData(gscRows, fmt(start), fmt(end));
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="gsc-error-banner" style="margin:24px">${esc(err.message)}</div>`;
+  }
+}
+
+// ── Render results ────────────────────────────────────────────────────────────
+function renderGSCData(rows, startDate, endDate) {
+  const container = document.getElementById('gsc-results');
+
+  if (!rows || rows.length === 0) {
+    container.innerHTML = '<div class="gsc-empty">No data found for this property and date range.</div>';
+    return;
+  }
+
+  const totClicks = rows.reduce((s, r) => s + r.clicks,      0);
+  const totImp    = rows.reduce((s, r) => s + r.impressions, 0);
+  const avgCTR    = totImp > 0 ? (totClicks / totImp) * 100 : 0;
+  const avgPos    = rows.reduce((s, r) => s + r.position, 0) / rows.length;
+
+  container.innerHTML = `
+    <div class="gsc-summary">
+      <div class="gm-card"><div class="gm-label">Total Clicks</div><div class="gm-value">${totClicks.toLocaleString()}</div></div>
+      <div class="gm-card"><div class="gm-label">Total Impressions</div><div class="gm-value">${totImp.toLocaleString()}</div></div>
+      <div class="gm-card"><div class="gm-label">Avg CTR</div><div class="gm-value">${avgCTR.toFixed(1)}%</div></div>
+      <div class="gm-card"><div class="gm-label">Avg Position</div><div class="gm-value">${avgPos.toFixed(1)}</div></div>
+    </div>
+    <div class="gsc-meta">${rows.length.toLocaleString()} rows &nbsp;·&nbsp; ${startDate} → ${endDate}</div>
+    <div class="gsc-table-wrap" id="gsc-table-wrap"></div>
+  `;
+
+  renderGSCTable();
+}
+
+function renderGSCTable() {
+  const wrap = document.getElementById('gsc-table-wrap');
+  if (!wrap) return;
+
+  const sorted = [...gscRows].sort((a, b) => {
+    const av = gscSortKey === 'ctr' ? a.ctr : a[gscSortKey];
+    const bv = gscSortKey === 'ctr' ? b.ctr : b[gscSortKey];
+    return typeof av === 'number'
+      ? (av - bv) * gscSortDir
+      : String(av ?? '').localeCompare(String(bv ?? '')) * gscSortDir;
+  });
+
+  const dimCols = gscDims.map(d => ({
+    key: d,
+    label: { query: 'Query', page: 'Landing Page', country: 'Country', device: 'Device' }[d] || d,
+  }));
+  const metricCols = [
+    { key: 'clicks',      label: 'Clicks',       fmt: v => v.toLocaleString() },
+    { key: 'impressions', label: 'Impressions',   fmt: v => v.toLocaleString() },
+    { key: 'ctr',         label: 'CTR',           fmt: v => (v * 100).toFixed(1) + '%' },
+    { key: 'position',    label: 'Avg Position',  fmt: v => v.toFixed(1) },
+  ];
+  const cols = [...dimCols, ...metricCols];
+
+  const sortIcon = key => {
+    if (gscSortKey !== key) return '<span class="sort-icon">⇅</span>';
+    return gscSortDir === -1 ? '<span class="sort-icon on">↓</span>' : '<span class="sort-icon on">↑</span>';
+  };
+
+  const thead = `<tr>${cols.map(c => `<th data-sort="${c.key}">${c.label} ${sortIcon(c.key)}</th>`).join('')}</tr>`;
+
+  const DISPLAY_LIMIT = 500;
+  const tbody = sorted.slice(0, DISPLAY_LIMIT).map(row => {
+    const cells = cols.map(col => {
+      const dimIdx = gscDims.indexOf(col.key);
+      if (dimIdx !== -1) {
+        let val = row.keys?.[dimIdx] ?? '';
+        if (col.key === 'country') val = countryName(val);
+        if (col.key === 'page') {
+          return `<td class="gsc-page-cell"><a href="${esc(val)}" target="_blank" rel="noopener" title="${esc(val)}">${esc(val)}</a></td>`;
+        }
+        if (col.key === 'query') return `<td class="gsc-query-cell">${esc(val)}</td>`;
+        return `<td>${esc(val)}</td>`;
+      }
+      const v = col.key === 'ctr' ? (row.ctr ?? 0) : (row[col.key] ?? 0);
+      const metric = metricCols.find(m => m.key === col.key);
+      const text   = metric ? metric.fmt(v) : String(v);
+      let cls = '';
+      if (col.key === 'position') cls = v <= 3 ? 'pos-top' : v <= 10 ? 'pos-p1' : v <= 20 ? 'pos-p2' : 'pos-low';
+      return `<td class="${cls}">${esc(text)}</td>`;
+    });
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+
+  const trunc = sorted.length > DISPLAY_LIMIT
+    ? `<p class="gsc-trunc">Showing ${DISPLAY_LIMIT} of ${sorted.length.toLocaleString()} rows. Use a shorter date range or add a dimension filter to narrow results.</p>`
+    : '';
+
+  wrap.innerHTML = `<table class="gsc-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>${trunc}`;
+
+  // Sort on header click
+  wrap.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      gscSortDir = gscSortKey === k ? gscSortDir * -1 : -1;
+      gscSortKey = k;
+      renderGSCTable();
+    });
+  });
+}
+
+function showGSCError(msg) {
+  const container = document.getElementById('gsc-results');
+  if (container) container.innerHTML = `<div class="gsc-error-banner" style="margin:24px">${esc(msg)}</div>`;
+}

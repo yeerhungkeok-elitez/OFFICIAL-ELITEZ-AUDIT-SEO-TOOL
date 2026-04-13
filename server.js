@@ -1,3 +1,4 @@
+require("dotenv").config();
 // server.js
 // Express web server — serves the frontend and exposes two API endpoints:
 //
@@ -15,6 +16,7 @@ const { runConversionChecks } = require('./lib/conversion-checks');
 const { checkBrokenLinks }    = require('./lib/link-checker');
 const { SiteCrawler }         = require('./lib/crawler');
 const { weightedScore, buildScoreSummary } = require('./lib/scoring');
+const gsc                     = require('./lib/gsc');
 
 const app  = express();
 const PORT = 3000;
@@ -154,6 +156,87 @@ function friendlyError(err, url) {
   if (err.code === 'ETIMEDOUT' || err.message?.includes('timeout'))
     return `"${url}" timed out. The site may be very slow or unreachable.`;
   return err.message || 'Unknown error.';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE SEARCH CONSOLE — OAuth2 flow + API proxy
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Kick off Google OAuth2 — redirects the browser to Google's consent screen.
+app.get('/auth/google', (req, res) => {
+  if (!gsc.hasCredentials()) {
+    return res.status(503).send(
+      'GSC credentials not configured. Add GSC_CLIENT_ID and GSC_CLIENT_SECRET to your .env file and restart the server.'
+    );
+  }
+  res.redirect(gsc.getAuthUrl());
+});
+
+// Google redirects here after the user grants (or denies) access.
+app.get('/auth/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error) {
+    return res.redirect(`/?section=search-performance&gsc_error=${encodeURIComponent(error)}`);
+  }
+  if (!code) {
+    return res.redirect('/?section=search-performance&gsc_error=No+authorization+code+received');
+  }
+  try {
+    await gsc.exchangeCode(code);
+    res.redirect('/?section=search-performance');
+  } catch (err) {
+    res.redirect(`/?section=search-performance&gsc_error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// Frontend polls this to decide which GSC state to show.
+app.get('/api/gsc/status', (req, res) => {
+  res.json({
+    hasCredentials: gsc.hasCredentials(),
+    connected:      gsc.isConnected(),
+  });
+});
+
+// List all Search Console properties for the authenticated account.
+app.get('/api/gsc/sites', async (req, res) => {
+  if (!gsc.isConnected()) return res.status(401).json({ error: 'Not connected to Google Search Console.' });
+  try {
+    const sites = await gsc.getSites();
+    res.json({ sites });
+  } catch (err) {
+    res.status(500).json({ error: friendlyGSCError(err) });
+  }
+});
+
+// Run a searchAnalytics.query — main data endpoint for the Search Performance tab.
+// Body: { siteUrl, startDate, endDate, dimensions, rowLimit, filters }
+app.post('/api/gsc/query', async (req, res) => {
+  if (!gsc.isConnected()) return res.status(401).json({ error: 'Not connected to Google Search Console.' });
+  const { siteUrl, startDate, endDate, dimensions, rowLimit, filters } = req.body;
+  if (!siteUrl || !startDate || !endDate) {
+    return res.status(400).json({ error: 'siteUrl, startDate, and endDate are required.' });
+  }
+  try {
+    const rows = await gsc.querySearchAnalytics({ siteUrl, startDate, endDate, dimensions, rowLimit, filters });
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ error: friendlyGSCError(err) });
+  }
+});
+
+// Clear saved tokens (disconnect).
+app.post('/api/gsc/logout', (req, res) => {
+  gsc.clearTokens();
+  res.json({ ok: true });
+});
+
+function friendlyGSCError(err) {
+  const status = err.response?.status;
+  const msg    = err.response?.data?.error?.message || err.message;
+  if (status === 403) return `Permission denied: ${msg}. Make sure this Google account has access to the Search Console property.`;
+  if (status === 401) return 'Session expired. Please disconnect and reconnect your Google account.';
+  if (status === 429) return 'Google API rate limit hit. Wait a moment and try again.';
+  return msg || 'Unknown error communicating with Google Search Console.';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
