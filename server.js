@@ -239,6 +239,31 @@ function friendlyGSCError(err) {
   return msg || 'Unknown error communicating with Google Search Console.';
 }
 
+// ── POST /api/competitor/analyze ─────────────────────────────────────────────
+// Fetches each submitted URL, runs SEO checks, returns structured results.
+// Body: { pages: [{ url: string, label: string }] }   (max 4 entries)
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/competitor/analyze', async (req, res) => {
+  const { pages } = req.body;
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return res.status(400).json({ error: 'No pages provided.' });
+  }
+
+  const limited = pages.slice(0, 4);
+  const results = await Promise.all(limited.map(async ({ url, label }) => {
+    try {
+      if (!url || !/^https?:\/\//i.test(url)) throw new Error('Invalid URL');
+      const pageData = await fetchPage(url);
+      const checks   = runSEOChecks(pageData);
+      return { url, label, checks, responseTimeMs: pageData.responseTimeMs, status: 'ok' };
+    } catch (err) {
+      return { url, label, checks: [], responseTimeMs: null, status: 'error', error: err.message };
+    }
+  }));
+
+  res.json({ results });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\nSEO Audit Tool  →  http://localhost:${PORT}`);

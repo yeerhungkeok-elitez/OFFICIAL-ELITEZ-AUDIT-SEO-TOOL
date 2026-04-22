@@ -103,9 +103,11 @@
     <div class="app-nav-inner">
       <button class="app-tab active" data-section="technical">Technical Audit</button>
       <button class="app-tab" data-section="search-performance">Search Performance</button>
-      <span class="app-tab app-tab-soon">Keyword Tracker<span class="soon-badge">Phase 2</span></span>
-      <span class="app-tab app-tab-soon">Opportunities<span class="soon-badge">Phase 3</span></span>
-      <span class="app-tab app-tab-soon">Competitor Analysis<span class="soon-badge">Phase 4</span></span>
+      <button class="app-tab" data-section="keywords">Keyword Tracker</button>
+      <button class="app-tab" data-section="opportunities">Opportunities</button>
+      <button class="app-tab" data-section="geo">AI Visibility <span class="geo-nav-tag">GEO</span></button>
+      <button class="app-tab app-tab-demo" data-section="demo">🎯 Demo Mode <span class="demo-nav-tag">LEAD</span></button>
+      <button class="app-tab" data-section="competitor">Competitor Analysis</button>
     </div>
   </nav>
 
@@ -403,6 +405,17 @@
           </div>
         </div>
 
+        <!-- Country filter bar — populated after data loads -->
+        <div id="gsc-country-bar" style="display:none">
+          <div class="country-bar-inner">
+            <div class="gsc-field">
+              <label class="gsc-label" for="gsc-country-select">Filter by Country</label>
+              <select id="gsc-country-select" class="gsc-select" style="min-width:180px;max-width:220px"></select>
+            </div>
+            <button id="gsc-compare-btn" class="btn-ghost">Compare Countries</button>
+          </div>
+        </div>
+
         <!-- Results -->
         <div id="gsc-results">
           <div class="gsc-prompt">
@@ -415,6 +428,479 @@
 
     </div><!-- /gsc-wrap -->
   </div><!-- /section-search-performance -->
+
+  <!-- ── SECTION: OPPORTUNITIES ───────────────────────────────── -->
+  <div id="section-opportunities" class="app-section" style="display:none">
+    <div class="opp-wrap">
+
+      <!-- Page header -->
+      <div class="opp-page-header">
+        <div>
+          <h1 class="opp-page-title">Opportunities</h1>
+          <p class="opp-page-desc">Business-focused insights from your Search Console data — prioritized by revenue and growth impact.</p>
+        </div>
+        <div class="opp-header-actions">
+          <button id="opp-export-btn" class="btn-ghost" style="display:none">⬇ Export Report</button>
+          <button id="opp-config-toggle" class="btn-ghost">⚙ Configure</button>
+        </div>
+      </div>
+
+      <!-- Config panel -->
+      <div id="opp-config-panel" style="display:none">
+        <div class="opp-config-card">
+
+          <!-- Project save/load -->
+          <h3 class="opp-config-title">Project</h3>
+          <p class="opp-config-intro" style="margin-bottom:12px">Save your keyword configuration as a named project to reload quickly across sessions.</p>
+          <div class="opp-project-row">
+            <div class="opp-config-field" style="flex:1">
+              <label class="gsc-label" for="opp-cfg-name">Project Name</label>
+              <input type="text" id="opp-cfg-name" class="opp-config-input" placeholder="e.g. Elitez SG Q2 2026">
+            </div>
+            <div class="opp-config-field" style="flex:1">
+              <label class="gsc-label" for="opp-cfg-domain">Domain</label>
+              <input type="text" id="opp-cfg-domain" class="opp-config-input" placeholder="e.g. elitez.com.sg">
+            </div>
+          </div>
+          <div class="opp-project-row" style="margin-top:8px">
+            <div class="opp-config-field" style="flex:1">
+              <label class="gsc-label" for="opp-cfg-load-sel">Load Saved Project</label>
+              <select id="opp-cfg-load-sel" class="gsc-select" style="width:100%;height:32px"></select>
+            </div>
+            <button id="opp-cfg-load-btn" class="btn-ghost opp-proj-btn">Load</button>
+            <button id="opp-cfg-delete-btn" class="btn-ghost opp-proj-btn opp-proj-delete">Delete</button>
+          </div>
+          <hr class="opp-config-divider">
+
+          <h3 class="opp-config-title">Keyword Classification</h3>
+          <p class="opp-config-intro">Define your brand and service keywords to separate business-critical opportunities from generic traffic.</p>
+          <div class="opp-config-grid">
+            <div class="opp-config-field">
+              <label class="gsc-label" for="opp-cfg-brand">Brand Keywords</label>
+              <p class="opp-config-hint">Your brand name(s), comma-separated. Branded keywords are tracked separately.</p>
+              <input type="text" id="opp-cfg-brand" class="opp-config-input" placeholder="e.g. elitez, elitez asia, elitez group">
+            </div>
+            <div class="opp-config-field">
+              <label class="gsc-label" for="opp-cfg-service">Service Keywords</label>
+              <p class="opp-config-hint">Keywords tied to your services — one per line. These power Priority Opportunities and Strategic Gaps.</p>
+              <textarea id="opp-cfg-service" class="opp-config-textarea" rows="7" placeholder="recruitment agency&#10;hr outsourcing&#10;payroll services&#10;staffing solutions&#10;executive search&#10;talent acquisition"></textarea>
+            </div>
+            <div class="opp-config-field">
+              <label class="gsc-label" for="opp-cfg-exclude">Excluded Keywords</label>
+              <p class="opp-config-hint">Keywords to ignore — one per line. Matching queries are classified as "Other" regardless of other rules.</p>
+              <textarea id="opp-cfg-exclude" class="opp-config-textarea" rows="4" placeholder="free&#10;jobs&#10;salary&#10;login"></textarea>
+            </div>
+          </div>
+          <div class="opp-config-actions">
+            <button id="opp-cfg-save" class="btn-primary">Save &amp; Refresh</button>
+            <button id="opp-cfg-save-project" class="btn-ghost">Save as Project</button>
+            <button id="opp-cfg-cancel" class="btn-ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- No-data / prompt state -->
+      <div id="opp-no-data"></div>
+
+      <!-- Main content: opportunity sections -->
+      <div id="opp-content" style="display:none">
+        <div id="opp-summary-row"></div>
+        <div id="opp-filter-bar"></div>
+        <div id="opp-section-topactions"></div>
+        <div id="opp-section-priority"></div>
+        <div id="opp-section-gaps"></div>
+        <div id="opp-section-mapping"></div>
+        <div id="opp-section-pages"></div>
+        <div id="opp-section-quickwins"></div>
+        <div id="opp-section-lowctr"></div>
+      </div>
+
+    </div><!-- /opp-wrap -->
+  </div><!-- /section-opportunities -->
+
+  <!-- ── SECTION: AI VISIBILITY (GEO) ────────────────────────── -->
+  <div id="section-geo" class="app-section" style="display:none">
+    <div class="geo-wrap">
+
+      <!-- Page header -->
+      <div class="geo-page-header">
+        <div>
+          <h1 class="geo-page-title">AI Visibility <span class="geo-title-tag">GEO</span></h1>
+          <p class="geo-page-desc">Score your pages for Generative Engine Optimization — how well AI systems like ChatGPT, Perplexity, and Google AI Overviews can understand and cite your content.</p>
+        </div>
+        <button id="geo-refresh-btn" class="btn-ghost">↺ Re-analyse</button>
+      </div>
+
+      <!-- No-data state -->
+      <div id="geo-no-data"></div>
+
+      <!-- Main content (shown after crawl data loads) -->
+      <div id="geo-content" style="display:none">
+        <div id="geo-summary"></div>
+        <div id="geo-section-unified"></div>
+        <div id="geo-section-readiness"></div>
+        <div id="geo-section-prompt"></div>
+        <div id="geo-section-answerfit"></div>
+        <div id="geo-section-opps"></div>
+      </div>
+
+    </div><!-- /geo-wrap -->
+  </div><!-- /section-geo -->
+
+  <!-- ── SECTION: KEYWORD TRACKER ────────────────────────────── -->
+  <div id="section-keywords" class="app-section" style="display:none">
+    <div class="kw-wrap">
+
+      <div class="kw-header">
+        <div>
+          <h2 class="kw-title">Keyword Tracker</h2>
+          <p class="kw-sub">Monitor keyword positions from GSC and track GEO readiness over time.</p>
+        </div>
+        <button id="kw-add-btn" class="btn-primary">+ Add Keyword</button>
+      </div>
+
+      <!-- Add / Edit form -->
+      <div id="kw-form-wrap" class="kw-form-wrap" style="display:none">
+        <div class="kw-form-inner">
+          <div class="kw-form-title" id="kw-form-title">Add Keyword</div>
+          <div class="kw-form-grid">
+            <div class="kw-field">
+              <label class="kw-label">Keyword <span class="kw-req">*</span></label>
+              <input id="kw-f-keyword" class="kw-input" type="text" placeholder="e.g. seo agency singapore" autocomplete="off" />
+            </div>
+            <div class="kw-field">
+              <label class="kw-label">Country</label>
+              <select id="kw-f-country" class="kw-input">
+                <option value="">Any / All</option>
+                <option value="sg">Singapore</option>
+                <option value="my">Malaysia</option>
+                <option value="id">Indonesia</option>
+                <option value="ph">Philippines</option>
+                <option value="th">Thailand</option>
+                <option value="vn">Vietnam</option>
+                <option value="us">United States</option>
+                <option value="gb">United Kingdom</option>
+                <option value="au">Australia</option>
+                <option value="ca">Canada</option>
+              </select>
+            </div>
+            <div class="kw-field">
+              <label class="kw-label">Target Page <span class="kw-optional">(optional)</span></label>
+              <input id="kw-f-target" class="kw-input" type="text" placeholder="/services/seo-agency/" autocomplete="off" />
+            </div>
+            <div class="kw-field">
+              <label class="kw-label">Tag / Category <span class="kw-optional">(optional)</span></label>
+              <input id="kw-f-tag" class="kw-input" type="text" placeholder="e.g. Brand, Service, Location" autocomplete="off" />
+            </div>
+          </div>
+          <div id="kw-form-err" class="kw-form-err" style="display:none"></div>
+          <div class="kw-form-actions">
+            <button id="kw-form-save" class="btn-primary">Save Keyword</button>
+            <button id="kw-form-cancel" class="btn-ghost">Cancel</button>
+          </div>
+          <input type="hidden" id="kw-f-id" value="" />
+        </div>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="kw-filter-bar" id="kw-filter-bar" style="display:none">
+        <select id="kw-filter-country" class="kw-filter-sel">
+          <option value="">All Countries</option>
+        </select>
+        <select id="kw-filter-tag" class="kw-filter-sel">
+          <option value="">All Tags</option>
+        </select>
+        <span class="kw-filter-count" id="kw-filter-count"></span>
+        <button id="kw-snapshot-btn" class="btn-ghost kw-snapshot-btn" title="Save current GSC positions to history">📸 Snapshot</button>
+      </div>
+
+      <!-- Table output -->
+      <div id="kw-table-wrap"></div>
+
+      <!-- Empty state -->
+      <div id="kw-empty" class="kw-empty">
+        <div class="kw-empty-icon">🔍</div>
+        <div class="kw-empty-title">No keywords tracked yet</div>
+        <div class="kw-empty-sub">Add keywords above to monitor positions from GSC data and track GEO readiness over time.</div>
+      </div>
+
+    </div>
+  </div><!-- /section-keywords -->
+
+  <!-- ── SECTION: COMPETITOR ANALYSIS ────────────────────────── -->
+  <div id="section-competitor" class="app-section" style="display:none">
+    <div class="ca-wrap">
+
+      <div class="ca-header">
+        <div>
+          <h2 class="ca-title">Competitor Analysis</h2>
+          <p class="ca-sub">Compare keyword rankings, page structure, and GEO readiness against competitor pages.</p>
+        </div>
+      </div>
+
+      <!-- Input form -->
+      <div class="ca-form-card">
+        <div class="ca-form-grid">
+
+          <div class="ca-field ca-field-kw">
+            <label class="ca-label">Keyword <span class="ca-req">*</span></label>
+            <input id="ca-keyword" class="ca-input" type="text" placeholder="e.g. seo agency singapore" autocomplete="off" />
+          </div>
+
+          <div class="ca-field">
+            <label class="ca-label">Country</label>
+            <select id="ca-country" class="ca-input">
+              <option value="">Any / All</option>
+              <option value="sg">Singapore</option>
+              <option value="my">Malaysia</option>
+              <option value="id">Indonesia</option>
+              <option value="ph">Philippines</option>
+              <option value="th">Thailand</option>
+              <option value="vn">Vietnam</option>
+              <option value="us">United States</option>
+              <option value="gb">United Kingdom</option>
+              <option value="au">Australia</option>
+            </select>
+          </div>
+
+          <div class="ca-field ca-field-full">
+            <label class="ca-label">Our Ranking Page <span class="ca-optional">(auto-detected from GSC, or enter manually)</span></label>
+            <input id="ca-our-url" class="ca-input" type="url" placeholder="https://example.com/seo-agency/" autocomplete="off" />
+          </div>
+
+          <div class="ca-field ca-field-full">
+            <label class="ca-label">Our Position <span class="ca-optional">(from GSC if available)</span></label>
+            <input id="ca-our-pos" class="ca-input ca-input-sm" type="number" min="1" max="100" placeholder="e.g. 8" />
+          </div>
+
+        </div>
+
+        <!-- Competitor rows -->
+        <div class="ca-comps-hd">
+          <span>Competitor pages ranking for this keyword</span>
+          <span class="ca-comps-hint">Paste the exact URL of the competitor page that ranks — not just the domain</span>
+        </div>
+
+        <div class="ca-comp-rows">
+          <div class="ca-comp-row">
+            <span class="ca-comp-num">1</span>
+            <input class="ca-input ca-comp-url" type="url" placeholder="https://competitor.com/seo-services/" data-comp="1" autocomplete="off" />
+            <input class="ca-input ca-comp-pos" type="number" min="1" max="100" placeholder="Pos" data-comp="1" title="Their position (optional)" />
+          </div>
+          <div class="ca-comp-row">
+            <span class="ca-comp-num">2</span>
+            <input class="ca-input ca-comp-url" type="url" placeholder="https://competitor2.com/seo/" data-comp="2" autocomplete="off" />
+            <input class="ca-input ca-comp-pos" type="number" min="1" max="100" placeholder="Pos" data-comp="2" title="Their position (optional)" />
+          </div>
+          <div class="ca-comp-row">
+            <span class="ca-comp-num">3</span>
+            <input class="ca-input ca-comp-url" type="url" placeholder="https://competitor3.com/services/seo/" data-comp="3" autocomplete="off" />
+            <input class="ca-input ca-comp-pos" type="number" min="1" max="100" placeholder="Pos" data-comp="3" title="Their position (optional)" />
+          </div>
+        </div>
+
+        <div id="ca-form-err" class="ca-form-err" style="display:none"></div>
+
+        <div class="ca-form-actions">
+          <button id="ca-analyze-btn" class="btn-primary">Analyze Competitors →</button>
+          <span id="ca-spinner" class="ca-spinner" style="display:none">Fetching pages…</span>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div id="ca-results" style="display:none">
+
+        <!-- 1. Ranking comparison -->
+        <div class="ca-section">
+          <div class="ca-section-hd">
+            <span class="ca-section-num">1</span>
+            Ranking Comparison
+          </div>
+          <div id="ca-ranking-table"></div>
+        </div>
+
+        <!-- 2. GEO comparison -->
+        <div class="ca-section">
+          <div class="ca-section-hd">
+            <span class="ca-section-num">2</span>
+            GEO Readiness Comparison
+          </div>
+          <div id="ca-geo-table"></div>
+        </div>
+
+        <!-- 3. Why Competitor Wins -->
+        <div class="ca-section">
+          <div class="ca-section-hd">
+            <span class="ca-section-num">3</span>
+            Why They Win — Signal Analysis
+          </div>
+          <div id="ca-why-wins"></div>
+        </div>
+
+      </div>
+
+    </div>
+  </div><!-- /section-competitor -->
+
+  <!-- ── SECTION: DEMO / LEAD MODE ────────────────────────────── -->
+  <div id="section-demo" class="app-section" style="display:none">
+    <div class="demo-wrap">
+
+      <!-- Phase 1: URL input -->
+      <div id="demo-phase-input" class="demo-phase">
+        <div class="demo-hero">
+          <div class="demo-hero-badge">Free Instant Audit</div>
+          <h1 class="demo-hero-title">SEO + AI Visibility<br>Audit Report</h1>
+          <p class="demo-hero-sub">Enter any website to get an instant SEO health check and AI citability score — no login required.</p>
+          <form id="demo-audit-form" class="demo-url-form">
+            <div class="demo-url-row">
+              <input type="text" id="demo-url-in" class="demo-url-input" placeholder="https://yourwebsite.com" autocomplete="off" />
+              <button type="submit" class="demo-start-btn">Run Free Audit →</button>
+            </div>
+            <p class="demo-url-hint">Checks up to 10 pages · Takes ~30 seconds</p>
+          </form>
+          <div id="demo-use-existing" style="display:none">
+            <div class="demo-existing-card">
+              <span>⚡ Crawl data already loaded for <strong id="demo-existing-url"></strong></span>
+              <button id="demo-use-existing-btn" class="btn-ghost">Show results →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 2: Crawling -->
+      <div id="demo-phase-crawling" class="demo-phase" style="display:none">
+        <div class="demo-progress-wrap">
+          <div class="demo-spinner-ring"></div>
+          <h2 class="demo-progress-title">Scanning <span id="demo-crawl-domain"></span></h2>
+          <p id="demo-crawl-status" class="demo-progress-sub">Reading sitemap…</p>
+          <div class="demo-progress-bar-row">
+            <div class="demo-progress-bar-track"><div id="demo-progress-fill" class="demo-progress-fill"></div></div>
+            <span id="demo-progress-pct" class="demo-progress-pct">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 3: Results (gated) -->
+      <div id="demo-phase-results" class="demo-phase" style="display:none">
+        <div class="demo-results-hd">
+          <div class="demo-results-domain-row">
+            <span class="demo-results-icon">🌐</span>
+            <strong id="demo-results-domain"></strong>
+          </div>
+          <button id="demo-restart-btn" class="btn-ghost">↺ New Audit</button>
+        </div>
+
+        <!-- Score rings -->
+        <div class="demo-scores-row">
+          <div class="demo-score-card">
+            <div class="demo-score-ring">
+              <svg class="demo-ring-svg" viewBox="0 0 80 80">
+                <circle class="demo-ring-bg" cx="40" cy="40" r="34"/>
+                <circle class="demo-ring-fill" id="demo-seo-arc" cx="40" cy="40" r="34" stroke-dasharray="0 214" transform="rotate(-90 40 40)"/>
+              </svg>
+              <span class="demo-ring-num" id="demo-seo-num">–</span>
+            </div>
+            <div class="demo-score-lbl">SEO Health</div>
+            <div class="demo-score-tier" id="demo-seo-tier"></div>
+            <div class="demo-score-sub" id="demo-seo-sub"></div>
+          </div>
+          <div class="demo-score-divider"></div>
+          <div class="demo-score-card">
+            <div class="demo-score-ring">
+              <svg class="demo-ring-svg" viewBox="0 0 80 80">
+                <circle class="demo-ring-bg" cx="40" cy="40" r="34"/>
+                <circle class="demo-ring-fill" id="demo-geo-arc" cx="40" cy="40" r="34" stroke-dasharray="0 214" transform="rotate(-90 40 40)"/>
+              </svg>
+              <span class="demo-ring-num" id="demo-geo-num">–</span>
+            </div>
+            <div class="demo-score-lbl">GEO Readiness</div>
+            <div class="demo-score-tier" id="demo-geo-tier"></div>
+            <div class="demo-score-sub" id="demo-geo-sub"></div>
+          </div>
+        </div>
+
+        <!-- Top issues (high-impact only by default) -->
+        <div class="demo-issues-card">
+          <div class="demo-issues-hd">
+            <h3 class="demo-issues-title">Critical Issues</h3>
+            <span class="demo-issues-badge" id="demo-issues-badge"></span>
+          </div>
+          <div id="demo-issues-list" class="demo-issues-list"></div>
+          <button id="demo-show-warns-btn" class="demo-show-warns-btn" style="display:none"></button>
+        </div>
+
+        <!-- Value teaser: GEO insight + action previews (replaces static blur) -->
+        <div id="demo-teaser" class="demo-teaser" style="display:none"></div>
+
+        <!-- Email gate -->
+        <div id="demo-gate" class="demo-gate">
+          <div class="demo-gate-inner">
+            <div class="demo-gate-badge">📊 Full Report + Proposal</div>
+            <h3 class="demo-gate-title">Get Your Complete Audit</h3>
+            <p class="demo-gate-sub">Includes the full action plan, GEO recommendations, and an improvement scope proposal for <strong id="demo-gate-domain"></strong>.</p>
+            <form id="demo-lead-form" class="demo-lead-form" novalidate>
+              <input type="email" id="demo-email-in"   class="demo-lead-input" placeholder="Work email *" required />
+              <input type="text"  id="demo-company-in" class="demo-lead-input" placeholder="Company name (optional)" />
+              <p class="demo-lead-error" id="demo-lead-error" style="display:none"></p>
+              <button type="submit" class="demo-submit-btn">Download Report + Proposal →</button>
+            </form>
+            <p class="demo-gate-privacy">No spam, ever. Unsubscribe any time.</p>
+          </div>
+        </div>
+
+        <!-- Post-capture: download confirm + strategy CTA -->
+        <div id="demo-unlocked" style="display:none">
+          <div class="demo-unlocked-confirm">
+            <span>✅</span>
+            <div>
+              <strong>Report downloading…</strong>
+              <span>Check your downloads folder.</span>
+            </div>
+            <button id="demo-redownload-btn" class="btn-ghost">↓ Again</button>
+          </div>
+          <div class="demo-strategy-cta">
+            <div class="demo-scta-left">
+              <div class="demo-scta-eyebrow">Next step</div>
+              <h3 class="demo-scta-title">Want us to fix this for you?</h3>
+              <p class="demo-scta-sub">Our team implements these improvements in 4–6 weeks. Let's walk through the findings together.</p>
+            </div>
+            <div class="demo-scta-actions">
+              <a id="demo-book-call-btn" href="mailto:yeerhung.keok@elitez.asia?subject=SEO+GEO+Audit+Strategy+Call" class="demo-book-btn">📞 Book Strategy Call</a>
+              <button id="demo-proposal-btn" class="demo-proposal-btn">📋 Generate Proposal</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Consultant Tools (always visible after results load) -->
+        <div id="demo-consultant-tools" class="demo-consultant-tools" style="display:none">
+          <div class="demo-ct-hd">Consultant Tools</div>
+          <div class="demo-ct-btns">
+            <button id="demo-explain-btn" class="demo-ct-btn">💬 Client Explanation</button>
+            <button id="demo-proposal-standalone-btn" class="demo-ct-btn">📋 Generate Proposal</button>
+          </div>
+          <div id="demo-explain-panel" class="demo-explain-panel" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Leads management panel -->
+      <div class="demo-leads-section">
+        <button class="demo-leads-toggle" id="demo-leads-toggle">
+          <span>👥 Captured Leads</span>
+          <span class="demo-leads-badge" id="demo-leads-badge">0</span>
+          <span class="demo-leads-chevron">▾</span>
+        </button>
+        <div id="demo-leads-panel" class="demo-leads-panel" style="display:none">
+          <div id="demo-leads-table-wrap"></div>
+          <div class="demo-leads-actions">
+            <button id="demo-leads-csv-btn" class="btn-ghost">⬇ Export CSV</button>
+            <button id="demo-leads-clear-btn" class="btn-ghost" style="color:#dc2626;border-color:#fca5a5">🗑 Clear all</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /demo-wrap -->
+  </div><!-- /section-demo -->
 
   <footer class="footer">
     <span class="footer-logo">Elitez Group of Companies</span>
