@@ -186,6 +186,10 @@ function finaliseCrawl(summary) {
 
   renderResults(summary);
   showView('results');
+
+  // Refresh AI module page selectors now that allPages is fully populated
+  rbPopulatePageSelect();
+  agPopulateSelects();
 }
 
 // ── Render the full results panel ─────────────────────────────────────────────
@@ -524,6 +528,9 @@ function resetUI() {
       if (target === 'opportunities') refreshOpportunities();
       if (target === 'geo') refreshGeo();
       if (target === 'demo') refreshDemo();
+      if (target === 'agent')     agPopulateSelects();
+      if (target === 'blueprint') rbPopulatePageSelect();
+      if (target === 'optcycle')  ocInit();
     });
   });
 
@@ -4813,3 +4820,1942 @@ async function caAnalyze() {
     if (e.key === 'Enter') caAnalyze();
   });
 })();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI AGENT MODULE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let agActiveTool  = 'content';
+let agGenerating  = false;
+
+// ── Page selector helpers ─────────────────────────────────────────────────────
+function agPopulateSelects() {
+  const pages  = allPages.filter(p => p.url && !p.fetchError);
+  const noData = pages.length === 0;
+
+  function makeOption(p) {
+    const path  = p.path || '/';
+    const title = rbGetPageTitle(p);
+    const label = title ? path + '  —  ' + title.slice(0, 50) : path;
+    return '<option value="' + esc(p.url) + '" data-path="' + esc(path) + '">' + esc(label) + '</option>';
+  }
+
+  const placeholder = noData
+    ? '<option value="">No pages found — run Technical Audit first</option>'
+    : '<option value="">— Select a page —</option>';
+
+  const opts    = placeholder + pages.map(makeOption).join('');
+  const withAll = '<option value="">— All pages (site-wide) —</option>' + pages.map(makeOption).join('');
+
+  ['ag-content-page','ag-geo-page','ag-fixes-page'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.innerHTML = opts; el.disabled = noData; }
+  });
+  const linksEl = document.getElementById('ag-links-page');
+  if (linksEl) { linksEl.innerHTML = withAll; linksEl.disabled = false; }
+}
+
+// ── SSE streaming via fetch (POST — EventSource only supports GET) ─────────────
+async function agStream(payload, outputEl) {
+  outputEl.innerHTML = '<div class="ag-streaming"><div class="ag-streaming-text" id="ag-stream-buf"></div></div>';
+  const bufEl = document.getElementById('ag-stream-buf');
+  let   fullText = '';
+
+  let resp;
+  try {
+    resp = await fetch('/api/agent/generate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+  } catch (err) {
+    agShowError(outputEl, 'Network error: ' + err.message);
+    return;
+  }
+
+  if (!resp.ok) {
+    agShowError(outputEl, 'Server error ' + resp.status);
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let   buf    = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let d;
+      try { d = JSON.parse(line.slice(6)); } catch { continue; }
+
+      if (d.type === 'chunk') {
+        fullText += d.text;
+        if (bufEl) bufEl.textContent = fullText;
+      }
+      if (d.type === 'error') {
+        agShowError(outputEl, d.message);
+        return;
+      }
+      if (d.type === 'done') {
+        agRenderSections(agParseOutput(fullText), outputEl, d.usage);
+        return;
+      }
+    }
+  }
+
+  // If stream closed without a done event, render what we have
+  if (fullText) agRenderSections(agParseOutput(fullText), outputEl, null);
+}
+
+// ── Parse streamed markdown into sections ─────────────────────────────────────
+function agParseOutput(text) {
+  const raw   = text.trim().split(/\n(?=## )/);
+  const parts = [];
+  for (const chunk of raw) {
+    const match = chunk.match(/^##\s+(.+?)\n([\s\S]*)$/);
+    if (match) {
+      parts.push({ title: match[1].trim(), content: match[2].trim() });
+    } else if (parts.length === 0 && chunk.trim()) {
+      parts.push({ title: 'Overview', content: chunk.trim() });
+    }
+  }
+  return parts.length ? parts : [{ title: 'Output', content: text.trim() }];
+}
+
+// ── Render sections as copy-ready cards ───────────────────────────────────────
+function agRenderSections(sections, outputEl, usage) {
+  const cards = sections.map(s => {
+    const codeMatch = s.content.match(/^```(\w*)\n([\s\S]*?)```/);
+    if (codeMatch) {
+      const lang = codeMatch[1] || 'code';
+      const code = codeMatch[2].trim();
+      const rest = s.content.slice(codeMatch[0].length).trim();
+      return (
+        '<div class="ag-section-card">' +
+          '<div class="ag-section-hd">' +
+            '<span class="ag-section-title">' + esc(s.title) + '</span>' +
+            '<button class="ag-copy-btn" data-copy="' + esc(code) + '">Copy ' + lang.toUpperCase() + '</button>' +
+          '</div>' +
+          '<div class="ag-section-body ag-code-block"><pre><code>' + esc(code) + '</code></pre></div>' +
+          (rest ? '<div class="ag-section-body ag-section-prose">' + agMarkdownToHtml(rest) + '</div>' : '') +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="ag-section-card">' +
+        '<div class="ag-section-hd">' +
+          '<span class="ag-section-title">' + esc(s.title) + '</span>' +
+          '<button class="ag-copy-btn" data-copy="' + esc(s.content) + '">Copy</button>' +
+        '</div>' +
+        '<div class="ag-section-body ag-section-prose">' + agMarkdownToHtml(s.content) + '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  const usageHtml = usage
+    ? '<div class="ag-usage">Tokens used: ' + usage.input_tokens + ' in / ' + usage.output_tokens + ' out' +
+      (usage.cache_read_input_tokens ? ' &middot; ' + usage.cache_read_input_tokens + ' cached' : '') + '</div>'
+    : '';
+
+  outputEl.innerHTML = '<div class="ag-sections">' + cards + '</div>' + usageHtml;
+
+  outputEl.querySelectorAll('.ag-copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const text = btn.dataset.copy;
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('ag-copy-success');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('ag-copy-success'); }, 2000);
+      }).catch(() => {});
+    });
+  });
+}
+
+// ── Minimal markdown → HTML ───────────────────────────────────────────────────
+function agMarkdownToHtml(text) {
+  let h = text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Convert numbered and bulleted list lines into <li> items wrapped in <ul>/<ol>
+  const lines = h.split('\n');
+  const out   = [];
+  let inList  = false;
+
+  for (const line of lines) {
+    const numMatch = line.match(/^(\d+)\.\s+(.+)/);
+    const bulMatch = line.match(/^[-*]\s+(.+)/);
+    if (numMatch || bulMatch) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push('<li>' + (numMatch ? numMatch[2] : bulMatch[1]) + '</li>');
+    } else {
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push(line);
+    }
+  }
+  if (inList) out.push('</ul>');
+
+  return out.join('\n')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p>\s*<\/p>/g, '')
+    .replace(/<p>(<ul>)/g, '$1')
+    .replace(/(<\/ul>)<\/p>/g, '$1');
+}
+
+// ── Error display ─────────────────────────────────────────────────────────────
+function agShowError(outputEl, msg) {
+  outputEl.innerHTML = '<div class="ag-error">⚠️ ' + esc(msg) + '</div>';
+  agGenerating = false;
+  agResetBtns();
+}
+
+function agResetBtns() {
+  ['ag-content-btn','ag-geo-btn','ag-fixes-btn','ag-links-btn'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Generate'; }
+  });
+}
+
+// ── Main generate handler ─────────────────────────────────────────────────────
+async function agGenerate(tool) {
+  if (agGenerating) return;
+
+  const outputEl = document.getElementById('ag-' + tool + '-output');
+  if (!outputEl) return;
+
+  let payload = { task: tool };
+
+  if (tool === 'content' || tool === 'geo') {
+    const sel  = document.getElementById('ag-' + tool + '-page');
+    const kw   = document.getElementById('ag-' + tool + '-keyword');
+    const url  = sel ? sel.value : '';
+    if (!url) { agShowError(outputEl, 'Please select a page first.'); return; }
+    const pageData = allPages.find(p => p.url === url);
+    payload = {
+      task:      tool,
+      pageUrl:   url,
+      pagePath:  sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.path : '/',
+      pageTitle: pageData ? (pageData.title || '') : '',
+      checks:    pageData ? (pageData.checks || []) : [],
+      keyword:   kw ? kw.value.trim() : '',
+    };
+  }
+
+  if (tool === 'fixes') {
+    const sel  = document.getElementById('ag-fixes-page');
+    const url  = sel ? sel.value : '';
+    if (!url) { agShowError(outputEl, 'Please select a page first.'); return; }
+    const pageData = allPages.find(p => p.url === url);
+    const issues   = pageData ? (pageData.checks || []).filter(c => c.status === 'fail' || c.status === 'warn') : [];
+    if (issues.length === 0) { agShowError(outputEl, 'No issues found on this page — nothing to fix!'); return; }
+    payload = {
+      task:      'fixes',
+      pageUrl:   url,
+      pagePath:  sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.path : '/',
+      pageTitle: pageData ? (pageData.title || '') : '',
+      checks:    pageData ? (pageData.checks || []) : [],
+    };
+  }
+
+  if (tool === 'links') {
+    if (allPages.length === 0) { agShowError(outputEl, 'Run a crawl first so there are pages to analyse.'); return; }
+    const sel  = document.getElementById('ag-links-page');
+    const url  = sel ? sel.value : '';
+    const path = url && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.path : '';
+    payload = {
+      task:     'links',
+      pageUrl:  url,
+      pagePath: path,
+      pages: allPages
+        .filter(p => !p.fetchError)
+        .map(p => ({
+          url:               p.url,
+          path:              p.path || '/',
+          title:             p.title || '',
+          wordCount:         p.wordCount || 0,
+          internalLinkCount: (p.checks || []).reduce((n, c) => {
+            return c.name && c.name.toLowerCase().includes('internal link') ? (c.count || 0) : n;
+          }, 0),
+        })),
+    };
+  }
+
+  agGenerating = true;
+  const btn = document.getElementById('ag-' + tool + '-btn');
+  if (btn) { btn.dataset.label = btn.textContent; btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  try {
+    await agStream(payload, outputEl);
+  } finally {
+    agGenerating = false;
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Generate'; }
+  }
+}
+
+// ── Switch tabs ───────────────────────────────────────────────────────────────
+function agSwitchTool(tool) {
+  agActiveTool = tool;
+  document.querySelectorAll('.ag-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+  document.querySelectorAll('.ag-panel').forEach(p => { p.style.display = p.id === 'ag-panel-' + tool ? 'block' : 'none'; });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(function initAgent() {
+  document.querySelectorAll('.ag-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => agSwitchTool(btn.dataset.tool));
+  });
+  document.getElementById('ag-content-btn') && document.getElementById('ag-content-btn').addEventListener('click', () => agGenerate('content'));
+  document.getElementById('ag-geo-btn')     && document.getElementById('ag-geo-btn').addEventListener('click',     () => agGenerate('geo'));
+  document.getElementById('ag-fixes-btn')   && document.getElementById('ag-fixes-btn').addEventListener('click',   () => agGenerate('fixes'));
+  document.getElementById('ag-links-btn')   && document.getElementById('ag-links-btn').addEventListener('click',   () => agGenerate('links'));
+})();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RANKING BLUEPRINT MODULE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Dimension metadata (used for visual rendering) ────────────────────────────
+const RB_DIMS = {
+  'search intent alignment': { icon: '🎯', color: '#3b82f6' },
+  'e-e-a-t signals':         { icon: '🏆', color: '#7c3aed' },
+  'topic cluster coverage':  { icon: '🗺️', color: '#0891b2' },
+  'technical seo priorities':{ icon: '⚙️', color: '#475569' },
+  'authority signals':       { icon: '🔗', color: '#ea580c' },
+  'content freshness':       { icon: '📅', color: '#d97706' },
+  'keyword strategy':        { icon: '🔍', color: '#4f46e5' },
+  'local seo':               { icon: '📍', color: '#16a34a' },
+  'master action plan':      { icon: '📋', color: '#dc2626' },
+  '30-60-90 day roadmap':    { icon: '🗓️', color: '#0284c7' },
+};
+
+// Normalise a section title to match RB_DIMS keys
+function rbDimKey(title) {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim()
+    .replace(/[^a-z0-9\- ]/g, '').trim();
+}
+
+// ── Page title helper (used by both Blueprint and Agent selectors) ─────────────
+function rbGetPageTitle(p) {
+  if (p.title) return p.title;
+  // Fall back to the detail text of the first title-related check
+  const tc = (p.checks || []).find(c => c.name && /title/i.test(c.name) && c.detail);
+  return tc ? tc.detail.trim().slice(0, 70) : '';
+}
+
+// ── Page selector population ──────────────────────────────────────────────────
+function rbPopulatePageSelect() {
+  const el = document.getElementById('rb-page');
+  if (!el) return;
+
+  const pages = allPages.filter(p => p.url && !p.fetchError);
+
+  if (!pages.length) {
+    el.innerHTML = '<option value="">No pages found — run Technical Audit first</option>';
+    el.disabled  = true;
+    return;
+  }
+
+  el.disabled  = false;
+  el.innerHTML = '<option value="">— Select a page —</option>' +
+    pages.map(p => {
+      const path  = p.path || '/';
+      const title = rbGetPageTitle(p);
+      const label = title ? path + '  —  ' + title.slice(0, 50) : path;
+      return '<option value="' + esc(p.url) + '" data-path="' + esc(path) + '">' + esc(label) + '</option>';
+    }).join('');
+}
+
+// ── SSE streaming (reuses same /api/agent/generate endpoint) ─────────────────
+async function rbStream(payload) {
+  const outputEl = document.getElementById('rb-output');
+  if (!outputEl) return;
+
+  outputEl.innerHTML =
+    '<div class="rb-streaming">' +
+      '<div class="rb-streaming-header">' +
+        '<div class="rb-spinner"></div>' +
+        '<span>Claude is analysing your page across 8 dimensions…</span>' +
+      '</div>' +
+      '<div class="rb-streaming-text" id="rb-stream-buf"></div>' +
+    '</div>';
+
+  const bufEl    = document.getElementById('rb-stream-buf');
+  let   fullText = '';
+
+  let resp;
+  try {
+    resp = await fetch('/api/agent/generate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+  } catch (err) {
+    rbShowError('Network error: ' + err.message);
+    return;
+  }
+
+  if (!resp.ok) {
+    rbShowError('Server error ' + resp.status + ' — check server console for details.');
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let   buf    = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let d;
+      try { d = JSON.parse(line.slice(6)); } catch { continue; }
+
+      if (d.type === 'chunk') {
+        fullText += d.text;
+        if (bufEl) bufEl.textContent = fullText;
+      }
+      if (d.type === 'error') { rbShowError(d.message); return; }
+      if (d.type === 'done') {
+        rbRenderBlueprint(fullText, d.usage);
+        return;
+      }
+    }
+  }
+
+  if (fullText) rbRenderBlueprint(fullText, null);
+}
+
+// ── Parse output into sections ────────────────────────────────────────────────
+function rbParseOutput(text) {
+  const raw   = text.trim().split(/\n(?=## )/);
+  const parts = [];
+  for (const chunk of raw) {
+    const match = chunk.match(/^##\s+(.+?)\n([\s\S]*)$/);
+    if (match) {
+      parts.push({ title: match[1].trim(), content: match[2].trim() });
+    } else if (parts.length === 0 && chunk.trim()) {
+      parts.push({ title: 'Overview', content: chunk.trim() });
+    }
+  }
+  return parts;
+}
+
+// ── Render full blueprint ─────────────────────────────────────────────────────
+function rbRenderBlueprint(text, usage) {
+  const outputEl = document.getElementById('rb-output');
+  if (!outputEl) return;
+
+  const sections = rbParseOutput(text);
+
+  // Separate action plan + roadmap from dimension sections
+  const dimSections    = sections.filter(s => {
+    const k = rbDimKey(s.title);
+    return k !== 'master action plan' && k !== '30-60-90 day roadmap';
+  });
+  const actionSection  = sections.find(s => rbDimKey(s.title) === 'master action plan');
+  const roadmapSection = sections.find(s => rbDimKey(s.title) === '30-60-90 day roadmap');
+
+  let html = '';
+
+  // ── 1. Dimension cards grid ────────────────────────────────────────────────
+  if (dimSections.length) {
+    html += '<div class="rb-dims-grid">';
+    html += dimSections.map(s => rbRenderDimCard(s)).join('');
+    html += '</div>';
+  }
+
+  // ── 2. Master action plan ─────────────────────────────────────────────────
+  if (actionSection) {
+    html += rbRenderActionPlan(actionSection);
+  }
+
+  // ── 3. Roadmap ────────────────────────────────────────────────────────────
+  if (roadmapSection) {
+    html += rbRenderRoadmap(roadmapSection);
+  }
+
+  // ── 4. Usage ──────────────────────────────────────────────────────────────
+  if (usage) {
+    html += '<div class="rb-usage">Tokens: ' + usage.input_tokens + ' in / ' + usage.output_tokens + ' out' +
+      (usage.cache_read_input_tokens ? ' · ' + usage.cache_read_input_tokens + ' cached' : '') + '</div>';
+  }
+
+  outputEl.innerHTML = html || '<div class="rb-error">No output received — please try again.</div>';
+
+  // Wire all copy buttons (rb-copy-btn and rb-copy-add-btn)
+  outputEl.querySelectorAll('.rb-copy-btn, .rb-copy-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.dataset.copy || '').then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('rb-copy-ok');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('rb-copy-ok'); }, 2000);
+      }).catch(() => {});
+    });
+  });
+}
+
+// ── Render a single dimension card ───────────────────────────────────────────
+// ── Parse 5-field action block from a cluster of lines ───────────────────────
+function rbParseActionBlock(headerLine, remainingLines, startIdx) {
+  const highMatch = headerLine.match(/^🔴\s*HIGH\s*\|\s*(.+?)\s*\|\s*Impact:\s*(.+?)\s*\|\s*Effort:\s*(.+)/i);
+  const medMatch  = headerLine.match(/^🟡\s*MEDIUM\s*\|\s*(.+?)\s*\|\s*Impact:\s*(.+?)\s*\|\s*Effort:\s*(.+)/i);
+  const lowMatch  = headerLine.match(/^🟢\s*LOW\s*\|\s*(.+?)\s*\|\s*Impact:\s*(.+?)\s*\|\s*Effort:\s*(.+)/i);
+  const match = highMatch || medMatch || lowMatch;
+  if (!match) return null;
+
+  const tier   = highMatch ? 'high' : medMatch ? 'med' : 'low';
+  const title  = match[1].trim();
+  const impact = match[2].trim();
+  const effort = match[3].trim();
+
+  // Collect sub-field lines (– Page:, – Section:, – Add:, – Why:, plain – detail)
+  const fields  = { page: '', section: '', add: '', why: '', detail: [] };
+  let   i       = startIdx;
+  while (i < remainingLines.length && /^\s*[–\-]/.test(remainingLines[i])) {
+    const raw = remainingLines[i].trim().replace(/^[–\-]\s*/, '');
+    const pageM    = raw.match(/^Page:\s*(.+)/i);
+    const sectionM = raw.match(/^Section:\s*(.+)/i);
+    const addM     = raw.match(/^Add:\s*(.+)/i);
+    const whyM     = raw.match(/^Why:\s*(.+)/i);
+    if      (pageM)    fields.page    = pageM[1].trim();
+    else if (sectionM) fields.section = sectionM[1].trim();
+    else if (addM)     fields.add     = addM[1].trim().replace(/^[""]|[""]$/g, '');
+    else if (whyM)     fields.why     = whyM[1].trim();
+    else               fields.detail.push(raw);
+    i++;
+  }
+
+  return { tier, title, impact, effort, fields, linesConsumed: i - startIdx };
+}
+
+// ── Render a single structured action card ────────────────────────────────────
+function rbRenderActionCard(action) {
+  const { tier, title, impact, effort, fields } = action;
+  const badgeLabel = tier === 'high' ? '🔴 HIGH' : tier === 'med' ? '🟡 MEDIUM' : '🟢 LOW';
+  const addText    = fields.add   || fields.detail.join(' ');
+  const hasAdd     = addText.length > 0;
+
+  return (
+    '<div class="rb-action-row rb-action-' + tier + '">' +
+      '<div class="rb-action-top">' +
+        '<span class="rb-action-badge rb-badge-' + tier + '">' + badgeLabel + '</span>' +
+        '<span class="rb-action-title">' + esc(title) + '</span>' +
+        '<span class="rb-action-meta-inline">' +
+          '<span class="rb-action-impact">Impact: ' + esc(impact) + '</span>' +
+          '<span class="rb-action-effort">Effort: ' + esc(effort) + '</span>' +
+        '</span>' +
+      '</div>' +
+      (fields.page || fields.section ? (
+        '<div class="rb-action-fields">' +
+          (fields.page    ? '<div class="rb-action-field"><span class="rb-field-label">Page</span><code class="rb-field-url">' + esc(fields.page) + '</code></div>' : '') +
+          (fields.section ? '<div class="rb-action-field"><span class="rb-field-label">Section</span><span class="rb-field-val">' + esc(fields.section) + '</span></div>' : '') +
+        '</div>'
+      ) : '') +
+      (hasAdd ? (
+        '<div class="rb-action-add">' +
+          '<span class="rb-field-label rb-add-label">Add / Replace</span>' +
+          '<div class="rb-add-content">' + esc(addText) + '</div>' +
+          '<button class="rb-copy-add-btn" data-copy="' + esc(addText) + '">Copy</button>' +
+        '</div>'
+      ) : '') +
+      (fields.why ? (
+        '<div class="rb-action-why">' +
+          '<span class="rb-field-label">Why it ranks</span>' +
+          '<span class="rb-field-why-text">' + esc(fields.why) + '</span>' +
+        '</div>'
+      ) : '') +
+    '</div>'
+  );
+}
+
+function rbRenderDimCard(section) {
+  const key  = rbDimKey(section.title);
+  const meta = RB_DIMS[key] || { icon: '📌', color: '#64748b' };
+
+  const lines      = section.content.split('\n');
+  const statusLine = lines[0] && /^[🔴🟡🟢🔵]/.test(lines[0].trim()) ? lines[0].trim() : null;
+
+  let statusClass = 'rb-status-ok';
+  if (statusLine) {
+    if (statusLine.includes('🔴')) statusClass = 'rb-status-critical';
+    else if (statusLine.includes('🟡')) statusClass = 'rb-status-warn';
+    else if (statusLine.includes('🔵')) statusClass = 'rb-status-na';
+  }
+
+  // Split into prose paragraphs vs. action blocks
+  const bodyLines = statusLine ? lines.slice(1) : lines;
+  let   proseLines = [], actionCards = '', i = 0;
+
+  while (i < bodyLines.length) {
+    const line    = bodyLines[i].trim();
+    const isHigh  = /^🔴\s*HIGH/i.test(line);
+    const isMed   = /^🟡\s*MEDIUM/i.test(line);
+    const isLow   = /^🟢\s*LOW/i.test(line);
+
+    if (isHigh || isMed || isLow) {
+      // Flush prose first
+      if (proseLines.length) {
+        actionCards += '<div class="rb-dim-prose">' + rbMarkdown(proseLines.join('\n').trim()) + '</div>';
+        proseLines = [];
+      }
+      const action = rbParseActionBlock(line, bodyLines, i + 1);
+      if (action) {
+        actionCards += rbRenderActionCard(action);
+        i += 1 + action.linesConsumed;
+        continue;
+      }
+    }
+    proseLines.push(bodyLines[i]);
+    i++;
+  }
+  if (proseLines.length) {
+    actionCards += '<div class="rb-dim-prose">' + rbMarkdown(proseLines.join('\n').trim()) + '</div>';
+  }
+
+  return (
+    '<div class="rb-dim-card">' +
+      '<div class="rb-dim-hd" style="border-left-color:' + meta.color + '">' +
+        '<span class="rb-dim-icon">' + meta.icon + '</span>' +
+        '<span class="rb-dim-title">' + esc(section.title) + '</span>' +
+        (statusLine ? '<span class="rb-status-badge ' + statusClass + '">' +
+          esc(statusLine.replace(/^[🔴🟡🟢🔵]\s*/,'').split('—')[0].trim()) +
+        '</span>' : '') +
+        '<button class="rb-copy-btn" data-copy="' + esc(section.content) + '">Copy</button>' +
+      '</div>' +
+      '<div class="rb-dim-body">' + (actionCards || rbMarkdown(section.content)) + '</div>' +
+    '</div>'
+  );
+}
+
+// ── Render Master Action Plan ─────────────────────────────────────────────────
+function rbRenderActionPlan(section) {
+  const lines = section.content.split('\n');
+  let highCards = '', medCards = '', lowCards = '';
+  let i = 0;
+
+  while (i < lines.length) {
+    const line    = lines[i].trim();
+    const isHigh  = /^🔴\s*HIGH/i.test(line);
+    const isMed   = /^🟡\s*MEDIUM/i.test(line);
+    const isLow   = /^🟢\s*LOW/i.test(line);
+
+    if (isHigh || isMed || isLow) {
+      const action = rbParseActionBlock(line, lines, i + 1);
+      if (action) {
+        const card = rbRenderActionCard(action);
+        if (action.tier === 'high') highCards += card;
+        else if (action.tier === 'med') medCards += card;
+        else lowCards += card;
+        i += 1 + action.linesConsumed;
+        continue;
+      }
+    }
+    i++;
+  }
+
+  const hasCards = highCards || medCards || lowCards;
+  const totalCount = (highCards.match(/rb-action-row/g) || []).length +
+                     (medCards.match(/rb-action-row/g) || []).length +
+                     (lowCards.match(/rb-action-row/g) || []).length;
+
+  const buildGroup = (label, emoji, colorClass, cards) => cards
+    ? '<div class="rb-priority-group">' +
+        '<div class="rb-priority-label ' + colorClass + '">' + emoji + ' ' + label +
+          ' <span class="rb-priority-count">' + (cards.match(/rb-action-row/g) || []).length + ' actions</span>' +
+        '</div>' +
+        cards +
+      '</div>'
+    : '';
+
+  return (
+    '<div class="rb-action-wrap">' +
+      '<div class="rb-section-hd">' +
+        '<span class="rb-section-icon">📋</span>' +
+        '<span class="rb-section-title">Master Action Plan</span>' +
+        (totalCount ? '<span class="rb-action-total">' + totalCount + ' actions</span>' : '') +
+        '<button class="rb-copy-btn" data-copy="' + esc(section.content) + '">Copy All</button>' +
+      '</div>' +
+      (hasCards
+        ? '<div class="rb-action-list">' +
+            buildGroup('High Priority', '🔴', 'rb-pl-high', highCards) +
+            buildGroup('Medium Priority', '🟡', 'rb-pl-med', medCards) +
+            buildGroup('Low Priority', '🟢', 'rb-pl-low', lowCards) +
+          '</div>'
+        : '<div class="rb-dim-body">' + rbMarkdown(section.content) + '</div>') +
+    '</div>'
+  );
+}
+
+// ── Render 30-60-90 Roadmap ───────────────────────────────────────────────────
+function rbRenderRoadmap(section) {
+  const phases = [
+    { label: 'Days 1–30', key: '1.30', emoji: '🚀', color: '#dc2626' },
+    { label: 'Days 31–60', key: '31.60', emoji: '📈', color: '#d97706' },
+    { label: 'Days 61–90', key: '61.90', emoji: '🏁', color: '#16a34a' },
+  ];
+
+  const content = section.content;
+  const lines   = content.split('\n');
+
+  // Try to split by phase headings
+  const phaseBlocks = {};
+  let   currentPhase = null;
+  for (const line of lines) {
+    const heading = line.match(/days?\s*(1[\-–]30|31[\-–]60|61[\-–]90)/i);
+    if (heading) {
+      const key = heading[1].replace(/[–]/g, '.');
+      currentPhase = key.includes('1') && !key.includes('31') && !key.includes('61') ? '1.30'
+                   : key.includes('31') ? '31.60' : '61.90';
+      phaseBlocks[currentPhase] = '';
+    } else if (currentPhase) {
+      phaseBlocks[currentPhase] = (phaseBlocks[currentPhase] || '') + line + '\n';
+    }
+  }
+
+  const hasPhases = Object.keys(phaseBlocks).length > 0;
+
+  return (
+    '<div class="rb-roadmap-wrap">' +
+      '<div class="rb-section-hd">' +
+        '<span class="rb-section-icon">🗓️</span>' +
+        '<span class="rb-section-title">30-60-90 Day Roadmap</span>' +
+        '<button class="rb-copy-btn" data-copy="' + esc(section.content) + '">Copy</button>' +
+      '</div>' +
+      (hasPhases
+        ? '<div class="rb-roadmap-grid">' +
+          phases.map(ph => (
+            '<div class="rb-roadmap-phase" style="border-top-color:' + ph.color + '">' +
+              '<div class="rb-phase-label" style="color:' + ph.color + '">' + ph.emoji + ' ' + ph.label + '</div>' +
+              '<div class="rb-phase-body">' + rbMarkdown((phaseBlocks[ph.key] || '').trim()) + '</div>' +
+            '</div>'
+          )).join('') +
+          '</div>'
+        : '<div class="rb-dim-body">' + rbMarkdown(content) + '</div>') +
+    '</div>'
+  );
+}
+
+// ── Minimal markdown → HTML ───────────────────────────────────────────────────
+function rbMarkdown(text) {
+  if (!text) return '';
+  let h = text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  const lines = h.split('\n');
+  const out   = [];
+  let inList  = false;
+
+  for (const line of lines) {
+    const numMatch = line.match(/^\d+\.\s+(.+)/);
+    const bulMatch = line.match(/^[-*–]\s+(.+)/);
+    if (numMatch || bulMatch) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push('<li>' + (numMatch ? numMatch[1] : bulMatch[1]) + '</li>');
+    } else {
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push(line);
+    }
+  }
+  if (inList) out.push('</ul>');
+
+  return out.join('\n')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p>\s*<\/p>/g, '')
+    .replace(/<p>(<ul>)/g, '$1')
+    .replace(/(<\/ul>)<\/p>/g, '$1');
+}
+
+// ── Error helper ──────────────────────────────────────────────────────────────
+function rbShowError(msg) {
+  const outputEl = document.getElementById('rb-output');
+  if (outputEl) outputEl.innerHTML = '<div class="rb-error">⚠️ ' + esc(msg) + '</div>';
+  const btn = document.getElementById('rb-generate-btn');
+  if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label || 'Generate Ranking Blueprint'; }
+}
+
+// ── Main generate handler ─────────────────────────────────────────────────────
+async function rbGenerate() {
+  const sel     = document.getElementById('rb-page');
+  const keyword = (document.getElementById('rb-keyword') || {}).value || '';
+  const bizType = (document.getElementById('rb-biz-type') || {}).value || '';
+  const location = (document.getElementById('rb-location') || {}).value || '';
+
+  const url = sel ? sel.value : '';
+  if (!url) {
+    rbShowError('Please select a page first. Run a crawl if no pages appear.');
+    return;
+  }
+
+  const pageData = allPages.find(p => p.url === url);
+  if (!pageData) { rbShowError('Page data not found — try re-selecting.'); return; }
+
+  const payload = {
+    task:      'blueprint',
+    pageUrl:   url,
+    pagePath:  sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.path : '/',
+    pageTitle: pageData.title || '',
+    checks:    pageData.checks || [],
+    keyword:   keyword.trim(),
+    bizType,
+    location:  location.trim(),
+    pages: allPages.filter(p => !p.fetchError).map(p => ({
+      url:       p.url,
+      path:      p.path || '/',
+      title:     p.title || '',
+      wordCount: p.wordCount || 0,
+      failCount: (p.issueCount || {}).fail || (p.checks || []).filter(c => c.status === 'fail').length,
+      warnCount: (p.issueCount || {}).warn || (p.checks || []).filter(c => c.status === 'warn').length,
+    })),
+  };
+
+  const btn = document.getElementById('rb-generate-btn');
+  if (btn) {
+    btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:rb-spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating Blueprint…';
+  }
+
+  try {
+    await rbStream(payload);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label || 'Generate Ranking Blueprint'; }
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(function initBlueprint() {
+  const btn = document.getElementById('rb-generate-btn');
+  if (btn) btn.addEventListener('click', rbGenerate);
+  // Tab population is now handled centrally in initSectionNav()
+})();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX PACK MODULE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Section metadata: icon, label, language for syntax highlight class
+var FP_SECTIONS = {
+  'title tag':               { icon: '🏷️',  label: 'Title Tag',              lang: 'html', hint: 'Paste inside <head>' },
+  'meta description':        { icon: '📝',  label: 'Meta Description',        lang: 'html', hint: 'Paste inside <head>' },
+  'h1 tag':                  { icon: '✍️',  label: 'H1 Heading',              lang: 'html', hint: 'Replace first <h1> in page body' },
+  'faq section':             { icon: '❓',  label: 'FAQ Section',             lang: 'html', hint: 'Paste into page body' },
+  'schema markup':           { icon: '📊',  label: 'Schema Markup',           lang: 'json', hint: 'Paste inside <head> or before </body>' },
+  'local business schema':   { icon: '📍',  label: 'Local Business Schema',   lang: 'json', hint: 'Paste inside <head> or before </body>' },
+  'internal link suggestions': { icon: '🔗', label: 'Internal Links',         lang: 'html', hint: 'Add to page body at suggested locations' },
+  'fix pack summary':        { icon: '📋',  label: 'Fix Pack Summary',        lang: 'text', hint: 'Share with your developer or content team' },
+};
+
+// Normalise section title to match FP_SECTIONS keys
+function fpKey(title) {
+  return title.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// ── Parse ## sections ─────────────────────────────────────────────────────────
+function fpParseOutput(text) {
+  var raw   = text.trim().split(/\n(?=## )/);
+  var parts = [];
+  for (var i = 0; i < raw.length; i++) {
+    var chunk = raw[i];
+    var match = chunk.match(/^##\s+(.+?)\n([\s\S]*)$/);
+    if (match) {
+      parts.push({ title: match[1].trim(), content: match[2].trim() });
+    } else if (parts.length === 0 && chunk.trim()) {
+      parts.push({ title: 'Overview', content: chunk.trim() });
+    }
+  }
+  return parts;
+}
+
+// ── Extract code block from section content ───────────────────────────────────
+function fpExtractCode(content) {
+  var match = content.match(/```(\w*)\n?([\s\S]*?)```/);
+  if (!match) return null;
+  return { lang: match[1] || 'html', code: match[2].trim(), rest: content.replace(match[0], '').trim() };
+}
+
+// ── Render a single fix section card ─────────────────────────────────────────
+function fpRenderCard(section) {
+  var key    = fpKey(section.title);
+  var meta   = FP_SECTIONS[key] || { icon: '📄', label: section.title, lang: 'html', hint: '' };
+  var parsed = fpExtractCode(section.content);
+  var prose  = parsed ? parsed.rest : section.content;
+  var code   = parsed ? parsed.code : '';
+  var lang   = parsed ? parsed.lang : meta.lang;
+
+  var codeBlock = code
+    ? '<div class="fp-code-wrap">' +
+        '<div class="fp-code-toolbar">' +
+          '<span class="fp-code-lang">' + esc(lang.toUpperCase() || 'CODE') + '</span>' +
+          '<span class="fp-code-hint">' + esc(meta.hint) + '</span>' +
+          '<button class="fp-copy-btn" data-copy="' + esc(code) + '">Copy ' + esc(lang.toUpperCase() || 'Code') + '</button>' +
+        '</div>' +
+        '<pre class="fp-code"><code>' + esc(code) + '</code></pre>' +
+      '</div>'
+    : '';
+
+  var proseBlock = prose
+    ? '<div class="fp-prose">' + fpMarkdown(prose) + '</div>'
+    : '';
+
+  return (
+    '<div class="fp-card" id="fp-card-' + esc(key.replace(/\s/g, '-')) + '">' +
+      '<div class="fp-card-hd">' +
+        '<span class="fp-card-icon">' + meta.icon + '</span>' +
+        '<div class="fp-card-title-wrap">' +
+          '<span class="fp-card-title">' + esc(meta.label || section.title) + '</span>' +
+          (meta.hint ? '<span class="fp-card-where">' + esc(meta.hint) + '</span>' : '') +
+        '</div>' +
+        (code ? '<button class="fp-copy-btn fp-copy-sm" data-copy="' + esc(code) + '">Copy</button>' : '') +
+      '</div>' +
+      codeBlock +
+      proseBlock +
+    '</div>'
+  );
+}
+
+// ── Minimal markdown → HTML ───────────────────────────────────────────────────
+function fpMarkdown(text) {
+  if (!text) return '';
+  var h = text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+  var lines = h.split('\n'), out = [], inList = false;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var numM = line.match(/^\d+\.\s+(.+)/);
+    var bulM = line.match(/^[-*•]\s+(.+)/);
+    if (numM || bulM) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push('<li>' + (numM ? numM[1] : bulM[1]) + '</li>');
+    } else {
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push(line);
+    }
+  }
+  if (inList) out.push('</ul>');
+  return out.join('\n')
+    .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p>\s*<\/p>/g, '')
+    .replace(/<p>(<ul>)/g,'$1').replace(/(<\/ul>)<\/p>/g,'$1');
+}
+
+// ── Build full fix pack HTML ──────────────────────────────────────────────────
+function fpRenderFixPack(text, meta, usage) {
+  var outputEl = document.getElementById('fp-output');
+  if (!outputEl) return;
+
+  var sections = fpParseOutput(text);
+  if (!sections.length) {
+    outputEl.innerHTML = '<div class="fp-error">No output received — please try again.</div>';
+    return;
+  }
+
+  var date    = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  var cards   = sections.map(fpRenderCard).join('');
+  var usageLine = usage
+    ? '<span class="fp-usage">Tokens: ' + usage.input_tokens + ' in / ' + usage.output_tokens + ' out' +
+      (usage.cache_read_input_tokens ? ' · ' + usage.cache_read_input_tokens + ' cached' : '') + '</span>'
+    : '';
+
+  outputEl.innerHTML =
+    '<div class="fp-wrap">' +
+      '<div class="fp-header">' +
+        '<div class="fp-header-left">' +
+          '<span class="fp-header-icon">📦</span>' +
+          '<div>' +
+            '<div class="fp-header-title">Fix Pack</div>' +
+            '<div class="fp-header-sub">' + esc(meta.pagePath || meta.pageUrl || '') + ' &middot; ' + esc(meta.keyword || 'target keyword') + ' &middot; ' + date + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="fp-header-right">' +
+          usageLine +
+          '<button id="fp-download-btn" class="fp-download-btn">&#8595; Download .md</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="fp-toc">' +
+        sections.map(function(s) {
+          var k = fpKey(s.title);
+          var m = FP_SECTIONS[k] || { icon: '📄', label: s.title };
+          return '<a class="fp-toc-item" href="#fp-card-' + esc(k.replace(/\s/g,'-')) + '">' + m.icon + ' ' + esc(m.label || s.title) + '</a>';
+        }).join('') +
+      '</div>' +
+      '<div class="fp-cards">' + cards + '</div>' +
+    '</div>';
+
+  // Wire copy buttons
+  outputEl.querySelectorAll('.fp-copy-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      navigator.clipboard.writeText(btn.dataset.copy || '').then(function() {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('fp-copy-ok');
+        setTimeout(function() { btn.textContent = orig; btn.classList.remove('fp-copy-ok'); }, 2000);
+      }).catch(function() {});
+    });
+  });
+
+  // Download button
+  var dlBtn = document.getElementById('fp-download-btn');
+  if (dlBtn) {
+    dlBtn.addEventListener('click', function() { fpDownload(sections, meta, date); });
+  }
+
+  // Smooth-scroll TOC links
+  outputEl.querySelectorAll('.fp-toc-item').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      var target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+// ── Download as Markdown ──────────────────────────────────────────────────────
+function fpDownload(sections, meta, date) {
+  var lines = [];
+  lines.push('# Fix Pack: ' + (meta.pagePath || meta.pageUrl || 'page'));
+  lines.push('');
+  lines.push('**URL:** ' + (meta.pageUrl || ''));
+  lines.push('**Keyword:** ' + (meta.keyword || ''));
+  lines.push('**Business type:** ' + (meta.bizType || ''));
+  lines.push('**Generated:** ' + date);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  sections.forEach(function(s, idx) {
+    var key    = fpKey(s.title);
+    var meta2  = FP_SECTIONS[key] || { icon: '📄', label: s.title, hint: '' };
+    var parsed = fpExtractCode(s.content);
+
+    lines.push('## ' + (idx + 1) + '. ' + meta2.icon + ' ' + (meta2.label || s.title));
+    if (meta2.hint) lines.push('> **Where to paste:** ' + meta2.hint);
+    lines.push('');
+
+    if (parsed) {
+      lines.push('```' + (parsed.lang || 'html'));
+      lines.push(parsed.code);
+      lines.push('```');
+      if (parsed.rest) {
+        lines.push('');
+        lines.push(parsed.rest);
+      }
+    } else {
+      lines.push(s.content);
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  });
+
+  lines.push('*Generated by SEO Audit Tool — Elitez Group of Companies*');
+
+  var blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  var slug = (meta.pagePath || 'page').replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  a.href     = url;
+  a.download = 'fix-pack-' + slug + '.md';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Streaming ─────────────────────────────────────────────────────────────────
+async function fpStream(payload, meta) {
+  var outputEl = document.getElementById('fp-output');
+  if (!outputEl) return;
+  outputEl.style.display = 'block';
+
+  outputEl.innerHTML =
+    '<div class="fp-streaming">' +
+      '<div class="fp-streaming-hd">' +
+        '<div class="fp-spinner"></div>' +
+        '<span>Generating Fix Pack — writing paste-ready code for each element…</span>' +
+      '</div>' +
+      '<div class="fp-stream-text" id="fp-stream-buf"></div>' +
+    '</div>';
+
+  var bufEl    = document.getElementById('fp-stream-buf');
+  var fullText = '';
+
+  var resp;
+  try {
+    resp = await fetch('/api/agent/generate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+  } catch (err) {
+    fpShowError('Network error: ' + err.message);
+    return;
+  }
+
+  if (!resp.ok) {
+    fpShowError('Server error ' + resp.status);
+    return;
+  }
+
+  var reader = resp.body.getReader();
+  var dec    = new TextDecoder();
+  var buf    = '';
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buf += dec.decode(chunk.value, { stream: true });
+    var lines = buf.split('\n');
+    buf = lines.pop();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.startsWith('data: ')) continue;
+      var d;
+      try { d = JSON.parse(line.slice(6)); } catch(e) { continue; }
+      if (d.type === 'chunk') {
+        fullText += d.text;
+        if (bufEl) bufEl.textContent = fullText;
+      }
+      if (d.type === 'error') { fpShowError(d.message); return; }
+      if (d.type === 'done')  { fpRenderFixPack(fullText, meta, d.usage); return; }
+    }
+  }
+  if (fullText) fpRenderFixPack(fullText, meta, null);
+}
+
+// ── Error helper ──────────────────────────────────────────────────────────────
+function fpShowError(msg) {
+  var outputEl = document.getElementById('fp-output');
+  if (outputEl) {
+    outputEl.style.display = 'block';
+    outputEl.innerHTML = '<div class="fp-error">⚠️ ' + esc(msg) + '</div>';
+  }
+  var btn = document.getElementById('fp-generate-btn');
+  if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label || 'Apply Fix Pack'; }
+}
+
+// ── Main generate handler ─────────────────────────────────────────────────────
+async function fpGenerate() {
+  var sel      = document.getElementById('rb-page');
+  var keyword  = (document.getElementById('rb-keyword') || {}).value || '';
+  var bizType  = (document.getElementById('rb-biz-type') || {}).value || '';
+  var location = (document.getElementById('rb-location') || {}).value || '';
+
+  var url = sel ? sel.value : '';
+  if (!url) {
+    fpShowError('Please select a page first. Run a crawl if no pages appear.');
+    return;
+  }
+
+  var pageData = allPages.find(function(p) { return p.url === url; });
+  if (!pageData) { fpShowError('Page data not found — try re-selecting.'); return; }
+
+  var pagePath = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.path : '/';
+
+  var meta = { pageUrl: url, pagePath: pagePath, keyword: keyword.trim(), bizType: bizType, location: location.trim() };
+
+  var payload = {
+    task:      'fix-pack',
+    maxTokens: 7000,
+    pageUrl:   url,
+    pagePath:  pagePath,
+    pageTitle: pageData.title || '',
+    checks:    pageData.checks || [],
+    keyword:   keyword.trim(),
+    bizType:   bizType,
+    location:  location.trim(),
+    pages: allPages.filter(function(p) { return !p.fetchError; }).map(function(p) {
+      return { url: p.url, path: p.path || '/', title: p.title || '' };
+    }),
+  };
+
+  var btn = document.getElementById('fp-generate-btn');
+  if (btn) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  // Scroll to output area
+  var outputEl = document.getElementById('fp-output');
+  if (outputEl) {
+    outputEl.style.display = 'block';
+    setTimeout(function() { outputEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
+  }
+
+  try {
+    await fpStream(payload, meta);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label || 'Apply Fix Pack'; }
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(function initFixPack() {
+  var btn = document.getElementById('fp-generate-btn');
+  if (btn) btn.addEventListener('click', fpGenerate);
+})();
+
+
+// ── AI OPTIMIZATION CYCLE ─────────────────────────────────────────────────────
+
+function ocDateStr(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function ocPeriodDates(periodDays) {
+  var lag = 3;
+  var now = new Date();
+  var endDate = new Date(now);
+  endDate.setDate(endDate.getDate() - lag);
+
+  var startCurrent = new Date(endDate);
+  startCurrent.setDate(startCurrent.getDate() - periodDays + 1);
+
+  var endPrev = new Date(startCurrent);
+  endPrev.setDate(endPrev.getDate() - 1);
+
+  var startPrev = new Date(endPrev);
+  startPrev.setDate(startPrev.getDate() - periodDays + 1);
+
+  return {
+    current: { start: ocDateStr(startCurrent), end: ocDateStr(endDate) },
+    prev:    { start: ocDateStr(startPrev),    end: ocDateStr(endPrev)  }
+  };
+}
+
+async function ocFetchRows(siteUrl, startDate, endDate) {
+  var res = await fetch('/api/gsc/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ siteUrl: siteUrl, startDate: startDate, endDate: endDate, dimensions: ['query', 'page'], rowLimit: 500 })
+  });
+  if (!res.ok) throw new Error('GSC query failed: ' + res.status);
+  var json = await res.json();
+  return json.rows || [];
+}
+
+function ocComputeDeltas(currentRows, prevRows) {
+  var prevMap = {};
+  prevRows.forEach(function(r) { prevMap[(r.keys || []).join('|')] = r; });
+
+  var drops = [], ctrDrops = [], opportunities = [], rising = [];
+
+  currentRows.forEach(function(r) {
+    var key   = (r.keys || []).join('|');
+    var query = (r.keys && r.keys[0]) || '';
+    var page  = (r.keys && r.keys[1]) || '';
+    var prev  = prevMap[key];
+
+    if (!prev) {
+      if (r.impressions >= 10) {
+        opportunities.push({ query: query, page: page, clicks: r.clicks, impressions: r.impressions, position: r.position, ctr: r.ctr });
+      }
+      return;
+    }
+
+    var posChange = r.position - prev.position;
+    var ctrChange = r.ctr - prev.ctr;
+
+    if (posChange >= 3 && prev.clicks >= 2) {
+      drops.push({ query: query, page: page, posNow: r.position, posPrev: prev.position, posChange: posChange, clicksNow: r.clicks, clicksPrev: prev.clicks });
+    }
+    if (ctrChange <= -0.02 && prev.impressions >= 20) {
+      ctrDrops.push({ query: query, page: page, ctrNow: r.ctr, ctrPrev: prev.ctr, ctrChange: ctrChange, impressions: r.impressions });
+    }
+    if (r.clicks - prev.clicks >= 3 && posChange <= -1) {
+      rising.push({ query: query, page: page, posNow: r.position, posPrev: prev.position, clicksNow: r.clicks, clicksPrev: prev.clicks });
+    }
+  });
+
+  drops.sort(function(a, b) { return b.posChange - a.posChange; });
+  ctrDrops.sort(function(a, b) { return a.ctrChange - b.ctrChange; });
+  opportunities.sort(function(a, b) { return b.impressions - a.impressions; });
+  rising.sort(function(a, b) { return b.clicksNow - a.clicksNow; });
+
+  var totals = {
+    currentClicks:      currentRows.reduce(function(s, r) { return s + r.clicks; }, 0),
+    prevClicks:         prevRows.reduce(function(s, r) { return s + r.clicks; }, 0),
+    currentImpressions: currentRows.reduce(function(s, r) { return s + r.impressions; }, 0),
+    prevImpressions:    prevRows.reduce(function(s, r) { return s + r.impressions; }, 0),
+    currentAvgPos:      currentRows.length ? currentRows.reduce(function(s, r) { return s + r.position; }, 0) / currentRows.length : 0,
+    prevAvgPos:         prevRows.length    ? prevRows.reduce(function(s, r)    { return s + r.position; }, 0) / prevRows.length    : 0
+  };
+
+  return {
+    drops:         drops.slice(0, 20),
+    ctrDrops:      ctrDrops.slice(0, 20),
+    opportunities: opportunities.slice(0, 20),
+    rising:        rising.slice(0, 10),
+    totals:        totals
+  };
+}
+
+function ocSaveSnapshot(siteUrl, rows, dateRange) {
+  try {
+    var key = 'oc_snapshot_' + siteUrl.replace(/[^a-z0-9]/gi, '_');
+    localStorage.setItem(key, JSON.stringify({ rows: rows, dateRange: dateRange, savedAt: Date.now() }));
+  } catch (e) {}
+}
+
+function ocFmt(n, decimals) {
+  decimals = decimals == null ? 0 : decimals;
+  return typeof n === 'number' ? n.toFixed(decimals) : '—';
+}
+
+function ocDeltaBadge(now, prev, lowerIsBetter) {
+  var diff = now - prev;
+  if (Math.abs(diff) < 0.01 * Math.abs(prev || 1)) return '';
+  var pct     = prev ? ((diff / Math.abs(prev)) * 100).toFixed(1) : '—';
+  var positive = lowerIsBetter ? diff < 0 : diff > 0;
+  var cls     = positive ? 'oc-badge-up' : 'oc-badge-down';
+  var sign    = diff > 0 ? '+' : '';
+  return '<span class="oc-badge ' + cls + '">' + sign + pct + '%</span>';
+}
+
+function ocEsc(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function ocShortPath(url) {
+  return (url || '').replace(/^https?:\/\/[^/]+/, '').slice(0, 40) || '/';
+}
+
+function ocRenderDeltaSummary(deltas, dates) {
+  var drops = deltas.drops, ctrDrops = deltas.ctrDrops,
+      opportunities = deltas.opportunities, rising = deltas.rising,
+      totals = deltas.totals;
+
+  var html = '<div class="oc-delta-section">'
+    + '<div class="oc-period-bar">'
+    + '<span class="oc-period-label">Current: <strong>' + dates.current.start + ' → ' + dates.current.end + '</strong></span>'
+    + '<span class="oc-period-sep">vs</span>'
+    + '<span class="oc-period-label">Previous: <strong>' + dates.prev.start + ' → ' + dates.prev.end + '</strong></span>'
+    + '</div>'
+    + '<div class="oc-kpi-grid">'
+    + '<div class="oc-kpi"><div class="oc-kpi-val">' + ocFmt(totals.currentClicks) + ocDeltaBadge(totals.currentClicks, totals.prevClicks, false) + '</div><div class="oc-kpi-label">Clicks</div></div>'
+    + '<div class="oc-kpi"><div class="oc-kpi-val">' + ocFmt(totals.currentImpressions) + ocDeltaBadge(totals.currentImpressions, totals.prevImpressions, false) + '</div><div class="oc-kpi-label">Impressions</div></div>'
+    + '<div class="oc-kpi"><div class="oc-kpi-val">' + ocFmt(totals.currentAvgPos, 1) + ocDeltaBadge(totals.currentAvgPos, totals.prevAvgPos, true) + '</div><div class="oc-kpi-label">Avg Position</div></div>'
+    + '<div class="oc-kpi oc-kpi-alert"><div class="oc-kpi-val">' + drops.length + '</div><div class="oc-kpi-label">Ranking Drops</div></div>'
+    + '<div class="oc-kpi oc-kpi-warn"><div class="oc-kpi-val">' + ctrDrops.length + '</div><div class="oc-kpi-label">CTR Drops</div></div>'
+    + '<div class="oc-kpi oc-kpi-good"><div class="oc-kpi-val">' + opportunities.length + '</div><div class="oc-kpi-label">Opportunities</div></div>'
+    + '</div>';
+
+  if (drops.length) {
+    html += '<div class="oc-table-section"><h4 class="oc-table-title oc-title-drop">🔴 Ranking Drops (' + drops.length + ')</h4>'
+      + '<table class="oc-table"><thead><tr><th>Query</th><th>Page</th><th>Pos Now</th><th>Pos Prev</th><th>Δ</th><th>Clicks</th></tr></thead><tbody>'
+      + drops.map(function(d) {
+          return '<tr><td class="oc-cell-q">' + ocEsc(d.query) + '</td>'
+            + '<td class="oc-cell-p"><a href="' + ocEsc(d.page) + '" target="_blank" title="' + ocEsc(d.page) + '">' + ocEsc(ocShortPath(d.page)) + '</a></td>'
+            + '<td>' + ocFmt(d.posNow, 1) + '</td><td>' + ocFmt(d.posPrev, 1) + '</td>'
+            + '<td class="oc-delta-neg">+' + ocFmt(d.posChange, 1) + '</td>'
+            + '<td>' + d.clicksNow + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  if (ctrDrops.length) {
+    html += '<div class="oc-table-section"><h4 class="oc-table-title oc-title-warn">🟡 CTR Drops (' + ctrDrops.length + ')</h4>'
+      + '<table class="oc-table"><thead><tr><th>Query</th><th>Page</th><th>CTR Now</th><th>CTR Prev</th><th>Impressions</th></tr></thead><tbody>'
+      + ctrDrops.map(function(d) {
+          return '<tr><td class="oc-cell-q">' + ocEsc(d.query) + '</td>'
+            + '<td class="oc-cell-p"><a href="' + ocEsc(d.page) + '" target="_blank" title="' + ocEsc(d.page) + '">' + ocEsc(ocShortPath(d.page)) + '</a></td>'
+            + '<td>' + (d.ctrNow * 100).toFixed(1) + '%</td><td>' + (d.ctrPrev * 100).toFixed(1) + '%</td>'
+            + '<td>' + d.impressions + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  if (opportunities.length) {
+    html += '<div class="oc-table-section"><h4 class="oc-table-title oc-title-good">🟢 New Opportunities (' + opportunities.length + ')</h4>'
+      + '<table class="oc-table"><thead><tr><th>Query</th><th>Page</th><th>Impressions</th><th>Position</th><th>Clicks</th></tr></thead><tbody>'
+      + opportunities.map(function(d) {
+          return '<tr><td class="oc-cell-q">' + ocEsc(d.query) + '</td>'
+            + '<td class="oc-cell-p"><a href="' + ocEsc(d.page) + '" target="_blank" title="' + ocEsc(d.page) + '">' + ocEsc(ocShortPath(d.page)) + '</a></td>'
+            + '<td>' + d.impressions + '</td><td>' + ocFmt(d.position, 1) + '</td><td>' + d.clicks + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  if (rising.length) {
+    html += '<div class="oc-table-section"><h4 class="oc-table-title oc-title-rise">🚀 Rising Keywords (' + rising.length + ')</h4>'
+      + '<table class="oc-table"><thead><tr><th>Query</th><th>Page</th><th>Pos Now</th><th>Pos Prev</th><th>Clicks Now</th><th>Clicks Prev</th></tr></thead><tbody>'
+      + rising.map(function(d) {
+          return '<tr><td class="oc-cell-q">' + ocEsc(d.query) + '</td>'
+            + '<td class="oc-cell-p"><a href="' + ocEsc(d.page) + '" target="_blank" title="' + ocEsc(d.page) + '">' + ocEsc(ocShortPath(d.page)) + '</a></td>'
+            + '<td>' + ocFmt(d.posNow, 1) + '</td><td>' + ocFmt(d.posPrev, 1) + '</td>'
+            + '<td>' + d.clicksNow + '</td><td>' + d.clicksPrev + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function ocRenderAIOutput(md) {
+  var html = md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // ## Section headers — open a new section div each time
+  html = html.replace(/^## (.+)$/gm, '<div class="oc-ai-section"><h3 class="oc-ai-h3">$1</h3>');
+
+  // Action header lines with priority emoji
+  html = html.replace(/^([\u{1F534}\u{1F7E1}\u{1F7E2}]|🔴|🟡|🟢)\s*(HIGH|MEDIUM|LOW)\s*\|\s*(.+)$/gmu, function(_, emoji, tier, rest) {
+    var cls = tier === 'HIGH' ? 'oc-act-high' : tier === 'MEDIUM' ? 'oc-act-med' : 'oc-act-low';
+    return '<div class="oc-action-block ' + cls + '"><div class="oc-action-header">'
+      + emoji + ' <span class="oc-action-tier">' + tier + '</span> — ' + rest + '</div>';
+  });
+
+  // Sub-field lines (– Page: / – Section: / – Add: / – Why:)
+  html = html.replace(/^[–\-]\s*(Page|Section|Add|Replace|Why):\s*(.*)$/gm, function(_, label, val) {
+    if (label === 'Add' || label === 'Replace') {
+      return '<div class="oc-action-field oc-action-add"><span class="oc-field-label">' + label + ':</span> <code class="oc-add-code">' + val + '</code></div>';
+    }
+    return '<div class="oc-action-field"><span class="oc-field-label">' + label + ':</span> ' + val + '</div>';
+  });
+
+  // Bullet lines
+  html = html.replace(/^[ \t]*[-•]\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, '<ul>$&</ul>');
+
+  // Plain paragraphs
+  html = html.replace(/^(?!<)(.+)$/gm, '<p>$1</p>');
+
+  html = '<div class="oc-ai-content">' + html + '</div></div>';
+  return html;
+}
+
+async function ocStreamAnalysis(payload, siteUrl, dates, totals) {
+  var outputEl = document.getElementById('oc-output');
+  if (!outputEl) return;
+  outputEl.style.display = 'block';
+  outputEl.innerHTML = '<div class="oc-ai-header"><span>🤖 AI Analysis</span>'
+    + '<span class="oc-streaming-badge">Analyzing…</span></div>'
+    + '<div id="oc-ai-body" class="oc-ai-body ag-streaming"></div>';
+
+  var bodyEl = document.getElementById('oc-ai-body');
+
+  var res = await fetch('/api/agent/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok || !res.body) {
+    bodyEl.textContent = 'AI analysis failed. Please try again.';
+    return;
+  }
+
+  var reader  = res.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer  = '', fullText = '';
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    var lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li];
+      if (!line.startsWith('data: ')) continue;
+      var raw = line.slice(6).trim();
+      try {
+        var d = JSON.parse(raw);
+        if (d.type === 'chunk') { fullText += d.text; bodyEl.innerHTML = ocRenderAIOutput(fullText); }
+        if (d.type === 'error') {
+          bodyEl.innerHTML = '<div class="oc-error">⚠️ ' + ocEsc(d.message || 'AI error') + '</div>';
+          return;
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Parse structured actions, save report, switch to interactive task list
+  var actions  = ocParseActions(fullText);
+  var reportId = ocSaveReport(siteUrl, dates, fullText, actions, totals);
+
+  bodyEl.classList.remove('ag-streaming');
+  var badge = outputEl.querySelector('.oc-streaming-badge');
+  if (badge) badge.remove();
+
+  bodyEl.innerHTML = ocRenderTaskList(actions, reportId)
+    + '<details class="oc-raw-details"><summary class="oc-raw-summary">View raw AI output</summary>'
+    + '<div class="oc-raw-body">' + ocRenderAIOutput(fullText) + '</div></details>';
+
+  var histEl = document.getElementById('oc-history');
+  if (histEl) histEl.innerHTML = ocRenderHistory(siteUrl);
+
+  outputEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function ocRun() {
+  var siteSelect   = document.getElementById('oc-site-select');
+  var periodSelect = document.getElementById('oc-period-select');
+  var runBtn       = document.getElementById('oc-run-btn');
+  var deltaEl      = document.getElementById('oc-delta');
+  var outputEl     = document.getElementById('oc-output');
+
+  var siteUrl = siteSelect ? siteSelect.value : '';
+  if (!siteUrl) { alert('Please select a GSC property first.'); return; }
+
+  var periodDays = parseInt((periodSelect ? periodSelect.value : '') || '28', 10);
+  var dates = ocPeriodDates(periodDays);
+
+  if (runBtn) { runBtn.disabled = true; runBtn.textContent = '⏳ Loading GSC data…'; }
+  if (deltaEl) deltaEl.style.display = 'none';
+  if (outputEl) outputEl.style.display = 'none';
+
+  try {
+    if (runBtn) runBtn.textContent = '⏳ Fetching current period…';
+    var currentRows = await ocFetchRows(siteUrl, dates.current.start, dates.current.end);
+
+    if (runBtn) runBtn.textContent = '⏳ Fetching previous period…';
+    var prevRows = await ocFetchRows(siteUrl, dates.prev.start, dates.prev.end);
+
+    var deltas = ocComputeDeltas(currentRows, prevRows);
+
+    if (deltaEl) {
+      deltaEl.innerHTML = ocRenderDeltaSummary(deltas, dates);
+      deltaEl.style.display = 'block';
+    }
+
+    if (runBtn) runBtn.textContent = '⏳ Generating AI plan…';
+
+    var payload = {
+      task: 'optimization-cycle',
+      maxTokens: 4096,
+      data: {
+        siteUrl:      siteUrl,
+        periodDays:   periodDays,
+        dates:        dates,
+        drops:        deltas.drops,
+        ctrDrops:     deltas.ctrDrops,
+        opportunities: deltas.opportunities,
+        rising:       deltas.rising,
+        totals:       deltas.totals
+      }
+    };
+
+    await ocStreamAnalysis(payload, siteUrl, dates, deltas.totals);
+
+  } catch (err) {
+    if (deltaEl) {
+      deltaEl.innerHTML = '<div class="oc-error">Error: ' + ocEsc(err.message) + '</div>';
+      deltaEl.style.display = 'block';
+    }
+    console.error('OC error:', err);
+  } finally {
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🔄 Run Optimization Cycle'; }
+  }
+}
+
+var _ocInitDone = false;
+
+async function ocInit() {
+  // Only run once per page load — avoids re-fetching GSC on every tab switch
+  if (_ocInitDone) return;
+
+  var statusEl   = document.getElementById('oc-gsc-status');
+  var siteSelect = document.getElementById('oc-site-select');
+  var runBtn     = document.getElementById('oc-run-btn');
+  if (!statusEl) return;
+
+  try {
+    var res  = await fetch('/api/gsc/status');
+    var data = await res.json();
+
+    if (!data.connected) {
+      statusEl.innerHTML = '<div class="oc-gsc-bar-inner oc-gsc-disconnected">'
+        + '<span>⚠️ Google Search Console not connected.</span>'
+        + '<a href="/api/gsc/auth" class="oc-gsc-connect-btn">Connect GSC</a></div>';
+      return; // Don't set _ocInitDone so reconnect re-checks next time
+    }
+
+    statusEl.innerHTML = '<div class="oc-gsc-bar-inner oc-gsc-connected">'
+      + '<span>✅ GSC connected: <strong>' + ocEsc(data.email || 'Account') + '</strong></span></div>';
+
+    var sitesRes  = await fetch('/api/gsc/sites');
+    var sitesData = await sitesRes.json();
+    var sites     = sitesData.siteEntry || [];
+
+    if (siteSelect) {
+      siteSelect.innerHTML = sites.length
+        ? sites.map(function(s) { return '<option value="' + ocEsc(s.siteUrl) + '">' + ocEsc(s.siteUrl) + '</option>'; }).join('')
+        : '<option value="">No properties found</option>';
+      if (runBtn) runBtn.disabled = sites.length === 0;
+
+      // Show saved report history for the first/selected site
+      var histEl = document.getElementById('oc-history');
+      if (histEl) histEl.innerHTML = ocRenderHistory(siteSelect.value);
+
+      // Refresh history when property changes
+      siteSelect.onchange = function() {
+        var hEl = document.getElementById('oc-history');
+        if (hEl) hEl.innerHTML = ocRenderHistory(siteSelect.value);
+      };
+    }
+
+    _ocInitDone = true;
+
+  } catch (err) {
+    statusEl.innerHTML = '<div class="oc-gsc-bar-inner oc-gsc-disconnected">'
+      + '<span>⚠️ Could not check GSC status.</span></div>';
+  }
+}
+
+(function initOptCycle() {
+  var runBtn = document.getElementById('oc-run-btn');
+  if (runBtn) runBtn.addEventListener('click', ocRun);
+})();
+
+// ── OC v2: Report storage, task list, export, history ────────────────────────
+
+function ocParseActions(md) {
+  var actions = [];
+  var lines   = md.split('\n');
+  var i = 0;
+  while (i < lines.length) {
+    var line = lines[i].trim();
+    var m = line.match(/^(🔴|🟡|🟢)\s*(HIGH|MEDIUM|LOW)\s*\|\s*([^|]+?)(?:\s*\|\s*[Ii]mpact:\s*([^|]+?))?(?:\s*\|\s*[Ee]ffort:\s*(.+?))?$/);
+    if (m) {
+      var action = {
+        id:      'act_' + actions.length,
+        tier:    m[2].trim(),
+        title:   m[3].trim(),
+        impact:  (m[4] || '').trim(),
+        effort:  (m[5] || '').trim(),
+        page: '', section: '', add: '', why: '',
+        done: false
+      };
+      i++;
+      while (i < lines.length) {
+        var sub = lines[i].trim();
+        if (/^(🔴|🟡|🟢|##)/.test(sub)) break;
+        if (!sub) { i++; continue; }
+        var fm = sub.match(/^[–\-]\s*(Page|Section|Add|Replace|Why):\s*(.*)/i);
+        if (fm) {
+          var lbl = fm[1].toLowerCase();
+          if (lbl === 'replace') lbl = 'add';
+          action[lbl] = fm[2].trim();
+        } else if (!/^[–\-]/.test(sub) && !/^\d+\./.test(sub) && !sub.startsWith('*')) {
+          // non-field line inside an action block — stop parsing sub-fields
+          break;
+        }
+        i++;
+      }
+      actions.push(action);
+    } else {
+      i++;
+    }
+  }
+  return actions;
+}
+
+function ocSaveReport(siteUrl, dates, rawMd, actions, totals) {
+  var id = (siteUrl + '_' + dates.current.start)
+    .replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 80);
+  var report = {
+    id: id, siteUrl: siteUrl, dates: dates,
+    generatedAt: Date.now(), rawMd: rawMd,
+    actions: actions, totals: totals || {}
+  };
+  try {
+    localStorage.setItem('oc_report_' + id, JSON.stringify(report));
+    var idx = ocLoadReportIndex();
+    var ei  = idx.findIndex(function(r) { return r.id === id; });
+    var meta = { id: id, siteUrl: siteUrl, dates: dates, generatedAt: report.generatedAt };
+    if (ei >= 0) idx[ei] = meta; else idx.unshift(meta);
+    localStorage.setItem('oc_reports_index', JSON.stringify(idx.slice(0, 20)));
+  } catch (e) {}
+  return id;
+}
+
+function ocLoadReportIndex() {
+  try { return JSON.parse(localStorage.getItem('oc_reports_index') || '[]'); }
+  catch (e) { return []; }
+}
+
+function ocLoadReport(id) {
+  try { return JSON.parse(localStorage.getItem('oc_report_' + id) || 'null'); }
+  catch (e) { return null; }
+}
+
+function ocToggleDone(reportId, actionId, done) {
+  var report = ocLoadReport(reportId);
+  if (!report) return;
+  var a = report.actions.find(function(x) { return x.id === actionId; });
+  if (a) {
+    a.done = done;
+    try { localStorage.setItem('oc_report_' + reportId, JSON.stringify(report)); } catch (e) {}
+  }
+  var card = document.querySelector('[data-action-id="' + actionId + '"]');
+  if (card) card.classList.toggle('oc-task-done', done);
+  // Live-update progress bar
+  var list = document.getElementById('oc-task-list');
+  if (list && report) {
+    var total     = report.actions.length;
+    var doneCount = report.actions.filter(function(x) { return x.done; }).length;
+    var pct       = total ? Math.round((doneCount / total) * 100) : 0;
+    var fill = list.querySelector('.oc-progress-fill');
+    var info = list.querySelector('.oc-progress-info');
+    if (fill) fill.style.width = pct + '%';
+    if (info) info.innerHTML = '<span>' + doneCount + ' / ' + total + ' actions completed</span><span class="oc-pct">' + pct + '%</span>';
+  }
+}
+
+function ocRenderActionCard(action, reportId) {
+  var tierCls  = action.tier === 'HIGH' ? 'oc-act-high' : action.tier === 'MEDIUM' ? 'oc-act-med' : 'oc-act-low';
+  var tierBadge = action.tier === 'HIGH' ? 'oc-tier-high' : action.tier === 'MEDIUM' ? 'oc-tier-med' : 'oc-tier-low';
+  var doneCls  = action.done ? ' oc-task-done' : '';
+  var checked  = action.done ? ' checked' : '';
+  var rid      = ocEsc(reportId);
+
+  var meta = '';
+  if (action.impact) meta += '<span class="oc-meta-badge oc-meta-impact">⚡ ' + ocEsc(action.impact) + '</span>';
+  if (action.effort) meta += '<span class="oc-meta-badge oc-meta-effort">🔧 ' + ocEsc(action.effort) + '</span>';
+
+  var fields = '';
+  if (action.page)
+    fields += '<div class="oc-tf oc-tf-page"><span class="oc-tf-label">Page:</span> <a href="' + ocEsc(action.page) + '" target="_blank">' + ocEsc(action.page) + '</a></div>';
+  if (action.section)
+    fields += '<div class="oc-tf"><span class="oc-tf-label">Section:</span> ' + ocEsc(action.section) + '</div>';
+  if (action.add)
+    fields += '<div class="oc-tf oc-tf-add"><span class="oc-tf-label">Add / Replace:</span><div class="oc-add-block">' + ocEsc(action.add) + '</div></div>';
+  if (action.why)
+    fields += '<div class="oc-tf oc-tf-why"><em>' + ocEsc(action.why) + '</em></div>';
+
+  var fpBtn = '';
+  if (action.page && /^https?:\/\//.test(action.page)) {
+    fpBtn = '<button class="oc-fp-btn" onclick="ocOpenFixPack(\'' + action.page.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')" title="Generate Fix Pack for this page">→ Fix Pack</button>';
+  }
+
+  return '<div class="oc-task-card ' + tierCls + doneCls + '" data-action-id="' + action.id + '" data-report-id="' + rid + '">'
+    + '<div class="oc-tc-header">'
+    + '<label class="oc-check-label">'
+    + '<input type="checkbox" class="oc-check"' + checked + ' onchange="ocToggleDone(\'' + rid + '\',\'' + action.id + '\',this.checked)">'
+    + '<span class="oc-check-box"></span>'
+    + '</label>'
+    + '<div class="oc-tc-body">'
+    + '<div class="oc-tc-top">'
+    + '<span class="oc-tier-badge ' + tierBadge + '">' + action.tier + '</span>'
+    + '<span class="oc-tc-title">' + ocEsc(action.title) + '</span>'
+    + fpBtn
+    + '</div>'
+    + (meta   ? '<div class="oc-tc-meta">'   + meta   + '</div>' : '')
+    + (fields ? '<div class="oc-tc-fields">' + fields + '</div>' : '')
+    + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function ocRenderTaskList(actions, reportId) {
+  if (!actions || !actions.length) {
+    return '<div class="oc-no-actions">No structured actions were extracted. See the raw AI output below.</div>';
+  }
+  var total     = actions.length;
+  var doneCount = actions.filter(function(a) { return a.done; }).length;
+  var pct       = total ? Math.round((doneCount / total) * 100) : 0;
+  var rid       = ocEsc(reportId);
+
+  var high = actions.filter(function(a) { return a.tier === 'HIGH'; });
+  var med  = actions.filter(function(a) { return a.tier === 'MEDIUM'; });
+  var low  = actions.filter(function(a) { return a.tier === 'LOW'; });
+
+  function grp(items, emoji, label, cls) {
+    if (!items.length) return '';
+    return '<div class="oc-tier-group">'
+      + '<div class="oc-tier-group-hdr ' + cls + '">' + emoji + ' ' + label + ' &mdash; ' + items.length + ' action' + (items.length > 1 ? 's' : '') + '</div>'
+      + items.map(function(a) { return ocRenderActionCard(a, reportId); }).join('')
+      + '</div>';
+  }
+
+  return '<div class="oc-task-list" id="oc-task-list">'
+    + '<div class="oc-task-toolbar">'
+    + '<div class="oc-progress-wrap">'
+    + '<div class="oc-progress-info"><span>' + doneCount + ' / ' + total + ' actions completed</span><span class="oc-pct">' + pct + '%</span></div>'
+    + '<div class="oc-progress-bar"><div class="oc-progress-fill" style="width:' + pct + '%"></div></div>'
+    + '</div>'
+    + '<div class="oc-export-bar">'
+    + '<button class="oc-export-btn" onclick="ocExportReport(\'' + rid + '\',\'md\')">⬇ Markdown</button>'
+    + '<button class="oc-export-btn" onclick="ocExportReport(\'' + rid + '\',\'html\')">⬇ HTML</button>'
+    + '</div>'
+    + '</div>'
+    + grp(high, '🔴', 'HIGH PRIORITY',   'oc-tgh-high')
+    + grp(med,  '🟡', 'MEDIUM PRIORITY', 'oc-tgh-med')
+    + grp(low,  '🟢', 'LOW PRIORITY',    'oc-tgh-low')
+    + '</div>';
+}
+
+function ocOpenFixPack(pageUrl) {
+  var bpTab = document.querySelector('.app-tab[data-section="blueprint"]');
+  if (bpTab) bpTab.click();
+  setTimeout(function() {
+    var sel = document.getElementById('rb-page');
+    if (!sel) return;
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === pageUrl) { sel.selectedIndex = i; break; }
+    }
+  }, 250);
+}
+
+function ocExportReport(reportId, format) {
+  var report = ocLoadReport(reportId);
+  if (!report) { console.warn('OC export: report not found', reportId); return; }
+  var filename, content, mime;
+  if (format === 'md') {
+    filename = 'seo-cycle-' + report.dates.current.start + '.md';
+    content  = ocBuildMarkdown(report);
+    mime     = 'text/markdown';
+  } else {
+    filename = 'seo-cycle-' + report.dates.current.start + '.html';
+    content  = ocBuildHTML(report);
+    mime     = 'text/html';
+  }
+  var blob = new Blob([content], { type: mime });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function ocBuildMarkdown(report) {
+  var done = report.actions.filter(function(a) { return a.done; }).length;
+  var lines = [
+    '# SEO Optimization Cycle Report',
+    '',
+    '**Site:** ' + report.siteUrl,
+    '**Period:** ' + report.dates.current.start + ' to ' + report.dates.current.end,
+    '**vs Previous:** ' + report.dates.prev.start + ' to ' + report.dates.prev.end,
+    '**Generated:** ' + new Date(report.generatedAt).toLocaleString(),
+    '**Progress:** ' + done + ' / ' + report.actions.length + ' actions completed',
+    ''
+  ];
+  if (report.totals) {
+    lines.push('## Performance Summary', '');
+    lines.push('| Metric | Current | Previous |');
+    lines.push('|--------|---------|----------|');
+    lines.push('| Clicks | ' + (report.totals.currentClicks || 0) + ' | ' + (report.totals.prevClicks || 0) + ' |');
+    lines.push('| Impressions | ' + (report.totals.currentImpressions || 0) + ' | ' + (report.totals.prevImpressions || 0) + ' |');
+    lines.push('| Avg Position | ' + (report.totals.currentAvgPos || 0).toFixed(1) + ' | ' + (report.totals.prevAvgPos || 0).toFixed(1) + ' |');
+    lines.push('');
+  }
+  lines.push('## Action Plan (' + report.actions.length + ' actions)', '');
+  report.actions.forEach(function(a, idx) {
+    var status = a.done ? '[x]' : '[ ]';
+    lines.push((idx + 1) + '. ' + status + ' **' + a.tier + '** — ' + a.title);
+    var meta = [];
+    if (a.impact) meta.push('Impact: ' + a.impact);
+    if (a.effort) meta.push('Effort: ' + a.effort);
+    if (meta.length) lines.push('   > ' + meta.join(' · '));
+    if (a.page)    lines.push('   - **Page:** ' + a.page);
+    if (a.section) lines.push('   - **Section:** ' + a.section);
+    if (a.add)     lines.push('   - **Add/Replace:** `' + a.add + '`');
+    if (a.why)     lines.push('   - **Why:** ' + a.why);
+    lines.push('');
+  });
+  lines.push('---', '*Generated by Elitez SEO Audit Tool · AI Optimization Cycle*');
+  return lines.join('\n');
+}
+
+function ocBuildHTML(report) {
+  var done = report.actions.filter(function(a) { return a.done; }).length;
+  var pct  = report.actions.length ? Math.round((done / report.actions.length) * 100) : 0;
+  var rows = report.actions.map(function(a) {
+    var bg  = a.tier === 'HIGH' ? '#fee2e2' : a.tier === 'MEDIUM' ? '#fef3c7' : '#dcfce7';
+    var col = a.tier === 'HIGH' ? '#b91c1c' : a.tier === 'MEDIUM' ? '#92400e' : '#15803d';
+    var doneStyle = a.done ? ' style="opacity:.5"' : '';
+    return '<tr' + doneStyle + '>'
+      + '<td><span style="background:' + bg + ';color:' + col + ';border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700">' + a.tier + '</span></td>'
+      + '<td style="font-weight:600">' + ocEsc(a.title) + '</td>'
+      + '<td>' + ocEsc(a.impact || '—') + '</td>'
+      + '<td>' + ocEsc(a.effort || '—') + '</td>'
+      + '<td>' + (a.page ? '<a href="' + ocEsc(a.page) + '" target="_blank">' + ocEsc(ocShortPath(a.page)) + '</a>' : '—') + '</td>'
+      + '<td style="text-align:center">' + (a.done ? '✅' : '⬜') + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+    + '<title>SEO Cycle ' + ocEsc(report.dates.current.start) + '</title>'
+    + '<style>'
+    + 'body{font-family:Inter,system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 24px;color:#1a2b4a;font-size:14px}'
+    + 'h1{font-size:22px;margin:0 0 8px}h2{font-size:16px;margin:28px 0 12px;border-bottom:2px solid #e2e8f0;padding-bottom:8px}'
+    + '.meta{color:#64748b;font-size:13px;margin:3px 0}'
+    + '.prog{background:#e2e8f0;border-radius:6px;height:8px;margin:14px 0 4px;overflow:hidden}'
+    + '.prog-fill{background:#6366f1;height:8px;border-radius:6px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:13px}'
+    + 'th{text-align:left;padding:8px 10px;background:#f8fafc;border-bottom:2px solid #e2e8f0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}'
+    + 'td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}'
+    + 'a{color:#6366f1}'
+    + 'footer{color:#94a3b8;font-size:12px;margin-top:32px;border-top:1px solid #e2e8f0;padding-top:16px}'
+    + '</style></head><body>'
+    + '<h1>SEO Optimization Cycle Report</h1>'
+    + '<p class="meta"><strong>Site:</strong> ' + ocEsc(report.siteUrl) + '</p>'
+    + '<p class="meta"><strong>Period:</strong> ' + ocEsc(report.dates.current.start) + ' to ' + ocEsc(report.dates.current.end) + ' vs ' + ocEsc(report.dates.prev.start) + ' to ' + ocEsc(report.dates.prev.end) + '</p>'
+    + '<p class="meta"><strong>Generated:</strong> ' + new Date(report.generatedAt).toLocaleString() + '</p>'
+    + '<p class="meta"><strong>Progress:</strong> ' + done + ' / ' + report.actions.length + ' actions completed (' + pct + '%)</p>'
+    + '<div class="prog"><div class="prog-fill" style="width:' + pct + '%"></div></div>'
+    + '<h2>Action Plan</h2>'
+    + '<table><thead><tr><th>Priority</th><th>Action</th><th>Impact</th><th>Effort</th><th>Page</th><th>Done</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table>'
+    + '<footer>Generated by Elitez SEO Audit Tool · AI Optimization Cycle</footer>'
+    + '</body></html>';
+}
+
+function ocRenderHistory(siteUrl) {
+  var idx = ocLoadReportIndex().filter(function(r) { return !siteUrl || r.siteUrl === siteUrl; });
+  if (!idx.length) return '';
+  var opts = idx.map(function(r) {
+    var label = r.dates.current.start + ' (' + new Date(r.generatedAt).toLocaleDateString() + ')';
+    return '<option value="' + ocEsc(r.id) + '">' + label + '</option>';
+  }).join('');
+  return '<div class="oc-history-bar">'
+    + '<label class="oc-label" for="oc-history-select">Previous Reports</label>'
+    + '<select id="oc-history-select" class="oc-select oc-history-select" onchange="ocLoadHistoricReport(this.value)">'
+    + '<option value="">— Load a saved report —</option>'
+    + opts + '</select></div>';
+}
+
+function ocLoadHistoricReport(reportId) {
+  if (!reportId) return;
+  var report = ocLoadReport(reportId);
+  if (!report) { console.warn('OC history: report not found', reportId); return; }
+  var outputEl = document.getElementById('oc-output');
+  if (!outputEl) return;
+  outputEl.style.display = 'block';
+  outputEl.innerHTML = '<div class="oc-ai-header">'
+    + '<span>📋 Saved Report: ' + ocEsc(report.dates.current.start) + ' → ' + ocEsc(report.dates.current.end) + '</span>'
+    + '</div>'
+    + '<div class="oc-ai-body">'
+    + ocRenderTaskList(report.actions, report.id)
+    + '</div>';
+  outputEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}

@@ -108,6 +108,9 @@
       <button class="app-tab" data-section="geo">AI Visibility <span class="geo-nav-tag">GEO</span></button>
       <button class="app-tab app-tab-demo" data-section="demo">🎯 Demo Mode <span class="demo-nav-tag">LEAD</span></button>
       <button class="app-tab" data-section="competitor">Competitor Analysis</button>
+      <button class="app-tab" data-section="agent">🤖 AI Agent <span class="ag-nav-tag">AI</span></button>
+      <button class="app-tab app-tab-blueprint" data-section="blueprint">📐 Ranking Blueprint <span class="rb-nav-tag">STRATEGY</span></button>
+      <button class="app-tab app-tab-optcycle" data-section="optcycle">🔄 Cycle <span class="oc-nav-tag">WEEKLY</span></button>
     </div>
   </nav>
 
@@ -901,6 +904,247 @@
 
     </div><!-- /demo-wrap -->
   </div><!-- /section-demo -->
+
+  <!-- ── SECTION: AI AGENT ────────────────────────────────────────── -->
+  <div id="section-agent" class="app-section" style="display:none">
+    <div class="ag-wrap">
+
+      <div class="ag-header">
+        <div>
+          <h2 class="ag-title">AI SEO Agent</h2>
+          <p class="ag-sub">Generate optimised content, GEO answers, fix plans and internal link suggestions — powered by Claude AI.</p>
+        </div>
+        <span class="ag-badge">Powered by Claude</span>
+      </div>
+
+      <!-- ── Tool tabs ── -->
+      <div class="ag-tabs">
+        <button class="ag-tab-btn active" data-tool="content">Content Optimisation</button>
+        <button class="ag-tab-btn" data-tool="geo">GEO Optimisation</button>
+        <button class="ag-tab-btn" data-tool="fixes">Page Fix Plan</button>
+        <button class="ag-tab-btn" data-tool="links">Internal Linking</button>
+      </div>
+
+      <!-- ── Panel: Content Optimisation ── -->
+      <div id="ag-panel-content" class="ag-panel">
+        <div class="ag-form-card">
+          <div class="ag-form-row">
+            <div class="ag-field">
+              <label class="ag-label" for="ag-content-page">Page to optimise</label>
+              <select id="ag-content-page" class="ag-select">
+                <option value="">— Run a crawl first —</option>
+              </select>
+            </div>
+            <div class="ag-field">
+              <label class="ag-label" for="ag-content-keyword">Target keyword</label>
+              <input id="ag-content-keyword" class="ag-input" type="text" placeholder="e.g. HR software Singapore" />
+            </div>
+            <button id="ag-content-btn" class="ag-gen-btn">Generate Content</button>
+          </div>
+          <p class="ag-hint">Generates: title tag, meta description, H1, content outline, FAQ suggestions.</p>
+        </div>
+        <div class="ag-output" id="ag-content-output">
+          <p class="ag-empty">Select a page and keyword, then click Generate.</p>
+        </div>
+      </div>
+
+      <!-- ── Panel: GEO Optimisation ── -->
+      <div id="ag-panel-geo" class="ag-panel" style="display:none">
+        <div class="ag-form-card">
+          <div class="ag-form-row">
+            <div class="ag-field">
+              <label class="ag-label" for="ag-geo-page">Page to optimise</label>
+              <select id="ag-geo-page" class="ag-select">
+                <option value="">— Run a crawl first —</option>
+              </select>
+            </div>
+            <div class="ag-field">
+              <label class="ag-label" for="ag-geo-keyword">Target topic / keyword</label>
+              <input id="ag-geo-keyword" class="ag-input" type="text" placeholder="e.g. what is HR software" />
+            </div>
+            <button id="ag-geo-btn" class="ag-gen-btn">Generate GEO Content</button>
+          </div>
+          <p class="ag-hint">Generates: definition paragraph, structured answer, FAQ JSON-LD schema, AI-friendly summary.</p>
+        </div>
+        <div class="ag-output" id="ag-geo-output">
+          <p class="ag-empty">Select a page and topic, then click Generate.</p>
+        </div>
+      </div>
+
+      <!-- ── Panel: Page Fix Plan ── -->
+      <div id="ag-panel-fixes" class="ag-panel" style="display:none">
+        <div class="ag-form-card">
+          <div class="ag-form-row">
+            <div class="ag-field ag-field-wide">
+              <label class="ag-label" for="ag-fixes-page">Page to fix</label>
+              <select id="ag-fixes-page" class="ag-select">
+                <option value="">— Run a crawl first —</option>
+              </select>
+            </div>
+            <button id="ag-fixes-btn" class="ag-gen-btn">Generate Fix Plan</button>
+          </div>
+          <p class="ag-hint">Converts all failed and warning checks into step-by-step, copy-ready fix instructions.</p>
+        </div>
+        <div class="ag-output" id="ag-fixes-output">
+          <p class="ag-empty">Select a page with issues, then click Generate.</p>
+        </div>
+      </div>
+
+      <!-- ── Panel: Internal Linking ── -->
+      <div id="ag-panel-links" class="ag-panel" style="display:none">
+        <div class="ag-form-card">
+          <div class="ag-form-row">
+            <div class="ag-field ag-field-wide">
+              <label class="ag-label">Source page (optional — leave blank for site-wide suggestions)</label>
+              <select id="ag-links-page" class="ag-select">
+                <option value="">— All pages (site-wide) —</option>
+              </select>
+            </div>
+            <button id="ag-links-btn" class="ag-gen-btn">Generate Link Suggestions</button>
+          </div>
+          <p class="ag-hint">Analyses all crawled pages and recommends which pages to link from/to, with anchor text suggestions.</p>
+        </div>
+        <div class="ag-output" id="ag-links-output">
+          <p class="ag-empty">Run a crawl first, then click Generate.</p>
+        </div>
+      </div>
+
+    </div><!-- /ag-wrap -->
+  </div><!-- /section-agent -->
+
+  <!-- ── SECTION: RANKING BLUEPRINT ───────────────────────────────── -->
+  <div id="section-blueprint" class="app-section" style="display:none">
+    <div class="rb-wrap">
+
+      <!-- Header -->
+      <div class="rb-header">
+        <div class="rb-header-text">
+          <h2 class="rb-title">Ranking Blueprint</h2>
+          <p class="rb-sub">Complete ranking strategy across 8 dimensions — Search Intent, E-E-A-T, Topic Clusters, Technical SEO, Authority, Freshness, Keywords &amp; Local SEO.</p>
+        </div>
+        <span class="rb-badge">AI Strategy</span>
+      </div>
+
+      <!-- Dimension legend -->
+      <div class="rb-legend">
+        <span class="rb-dim-pill">🎯 Search Intent</span>
+        <span class="rb-dim-pill">🏆 E-E-A-T</span>
+        <span class="rb-dim-pill">🗺️ Topic Clusters</span>
+        <span class="rb-dim-pill">⚙️ Technical SEO</span>
+        <span class="rb-dim-pill">🔗 Authority</span>
+        <span class="rb-dim-pill">📅 Freshness</span>
+        <span class="rb-dim-pill">🔍 Keywords</span>
+        <span class="rb-dim-pill">📍 Local SEO</span>
+      </div>
+
+      <!-- Form -->
+      <div class="rb-form-card">
+        <div class="rb-form-grid">
+          <div class="rb-field">
+            <label class="rb-label" for="rb-page">Page to analyse</label>
+            <select id="rb-page" class="rb-select">
+              <option value="">— Run a crawl first —</option>
+            </select>
+          </div>
+          <div class="rb-field">
+            <label class="rb-label" for="rb-keyword">Target keyword</label>
+            <input id="rb-keyword" class="rb-input" type="text" placeholder="e.g. HR software Singapore" />
+          </div>
+          <div class="rb-field">
+            <label class="rb-label" for="rb-biz-type">Business type</label>
+            <select id="rb-biz-type" class="rb-select">
+              <option value="b2b-saas">B2B SaaS / Software</option>
+              <option value="b2b-services">B2B Professional Services</option>
+              <option value="ecommerce">E-commerce / Retail</option>
+              <option value="local">Local Business</option>
+              <option value="publisher">Publisher / Blog / Media</option>
+              <option value="b2c-services">B2C Services</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="rb-field">
+            <label class="rb-label" for="rb-location">Target location <span class="rb-label-hint">(optional — for local SEO)</span></label>
+            <input id="rb-location" class="rb-input" type="text" placeholder="e.g. Singapore, Kuala Lumpur" />
+          </div>
+        </div>
+        <div class="rb-form-actions">
+          <button id="rb-generate-btn" class="rb-gen-btn">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1l1.5 4.5H14l-3.75 2.75 1.5 4.5L8 9.5l-3.75 3.25 1.5-4.5L2 5.5h4.5L8 1z" fill="currentColor"/></svg>
+            Generate Ranking Blueprint
+          </button>
+          <button id="fp-generate-btn" class="fp-gen-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Apply Fix Pack
+          </button>
+          <p class="rb-hint">Generate a full ranking strategy, or jump straight to the ready-to-paste Fix Pack.</p>
+        </div>
+      </div>
+
+      <!-- Blueprint output -->
+      <div id="rb-output">
+        <div class="rb-empty">
+          <div class="rb-empty-icon">📐</div>
+          <p>Select a page, enter a target keyword, and click Generate to build your Ranking Blueprint.</p>
+          <p class="rb-empty-sub">Requires a completed crawl.</p>
+        </div>
+      </div>
+
+      <!-- Fix Pack output -->
+      <div id="fp-output" style="display:none"></div>
+
+    </div><!-- /rb-wrap -->
+  </div><!-- /section-blueprint -->
+
+  <!-- ── SECTION: AI OPTIMIZATION CYCLE ────────────────────────────── -->
+  <div id="section-optcycle" class="app-section" style="display:none">
+    <div class="oc-wrap">
+
+      <div class="oc-header">
+        <h2 class="oc-title">🔄 AI Optimization Cycle</h2>
+        <p class="oc-subtitle">Weekly GSC comparison — detect ranking drops, CTR loss, and new opportunities, then generate this week's AI-powered action plan.</p>
+      </div>
+
+      <!-- GSC connection status -->
+      <div id="oc-gsc-status" class="oc-gsc-bar">
+        <div class="oc-gsc-bar-inner oc-gsc-disconnected">
+          <span>⏳ Checking Google Search Console connection…</span>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="oc-form-card">
+        <div class="oc-form-row">
+          <div class="oc-field">
+            <label class="oc-label" for="oc-site-select">GSC Property</label>
+            <select id="oc-site-select" class="oc-select">
+              <option value="">— Connect GSC to load properties —</option>
+            </select>
+          </div>
+          <div class="oc-field">
+            <label class="oc-label" for="oc-period-select">Analysis Period</label>
+            <select id="oc-period-select" class="oc-select">
+              <option value="7">7 days vs previous 7</option>
+              <option value="14">14 days vs previous 14</option>
+              <option value="28" selected>28 days vs previous 28</option>
+            </select>
+          </div>
+          <div class="oc-field oc-field-btn">
+            <button id="oc-run-btn" class="oc-run-btn" disabled>🔄 Run Optimization Cycle</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Saved report history (populated by ocInit) -->
+      <div id="oc-history"></div>
+
+      <!-- Delta summary (populated after GSC data loads) -->
+      <div id="oc-delta" style="display:none"></div>
+
+      <!-- AI analysis output -->
+      <div id="oc-output" style="display:none"></div>
+
+    </div><!-- /oc-wrap -->
+  </div><!-- /section-optcycle -->
 
   <footer class="footer">
     <span class="footer-logo">Elitez Group of Companies</span>
