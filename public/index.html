@@ -103,7 +103,7 @@
     <div class="app-nav-inner">
       <button class="app-tab active" data-section="technical">Technical Audit</button>
       <button class="app-tab" data-section="search-performance">Search Performance</button>
-      <button class="app-tab" data-section="keywords">Keyword Tracker</button>
+      <button class="app-tab" data-section="keywords">🎯 Rank Target Keyword</button>
       <button class="app-tab" data-section="opportunities">Opportunities</button>
       <button class="app-tab" data-section="geo">AI Visibility <span class="geo-nav-tag">GEO</span></button>
       <button class="app-tab app-tab-demo" data-section="demo">🎯 Demo Mode <span class="demo-nav-tag">LEAD</span></button>
@@ -550,30 +550,43 @@
     </div><!-- /geo-wrap -->
   </div><!-- /section-geo -->
 
-  <!-- ── SECTION: KEYWORD TRACKER ────────────────────────────── -->
+  <!-- ── SECTION: RANK TARGET KEYWORD ────────────────────────── -->
   <div id="section-keywords" class="app-section" style="display:none">
-    <div class="kw-wrap">
+    <div class="rt-wrap">
 
-      <div class="kw-header">
+      <!-- Header -->
+      <div class="rt-header">
         <div>
-          <h2 class="kw-title">Keyword Tracker</h2>
-          <p class="kw-sub">Monitor keyword positions from GSC and track GEO readiness over time.</p>
+          <h2 class="rt-title">🎯 Rank Target Keyword</h2>
+          <p class="rt-sub">Enter a keyword to get a full Page 1 ranking action plan — GSC diagnosis, gap analysis, and copy-ready fixes.</p>
         </div>
-        <button id="kw-add-btn" class="btn-primary">+ Add Keyword</button>
+        <button id="rt-missions-btn" class="btn-ghost">📊 Dashboard</button>
       </div>
 
-      <!-- Add / Edit form -->
-      <div id="kw-form-wrap" class="kw-form-wrap" style="display:none">
-        <div class="kw-form-inner">
-          <div class="kw-form-title" id="kw-form-title">Add Keyword</div>
-          <div class="kw-form-grid">
-            <div class="kw-field">
-              <label class="kw-label">Keyword <span class="kw-req">*</span></label>
-              <input id="kw-f-keyword" class="kw-input" type="text" placeholder="e.g. seo agency singapore" autocomplete="off" />
+      <!-- Missions Panel (hidden by default) -->
+      <div id="rt-missions-panel" class="rt-missions-panel" style="display:none">
+        <div class="rt-missions-hd">
+          <span>📊 Ranking Mission Dashboard</span>
+          <button id="rt-missions-close-btn" class="btn-ghost">✕ Close</button>
+        </div>
+        <div id="rt-missions-list"></div>
+      </div>
+
+      <!-- Step 1: Input -->
+      <div class="rt-step-card" id="rt-input-card">
+        <div class="rt-step-hd">
+          <span class="rt-step-num">1</span>
+          <span class="rt-step-label">Target Keyword Input</span>
+        </div>
+        <div class="rt-step-body">
+          <div class="rt-form-grid">
+            <div class="rt-field">
+              <label class="rt-label">Target Keyword <span class="rt-req">*</span></label>
+              <input id="rt-kw" class="rt-input" type="text" placeholder="e.g. seo agency singapore" autocomplete="off"/>
             </div>
-            <div class="kw-field">
-              <label class="kw-label">Country</label>
-              <select id="kw-f-country" class="kw-input">
+            <div class="rt-field">
+              <label class="rt-label">Country</label>
+              <select id="rt-country" class="rt-input">
                 <option value="">Any / All</option>
                 <option value="sg">Singapore</option>
                 <option value="my">Malaysia</option>
@@ -587,44 +600,69 @@
                 <option value="ca">Canada</option>
               </select>
             </div>
-            <div class="kw-field">
-              <label class="kw-label">Target Page <span class="kw-optional">(optional)</span></label>
-              <input id="kw-f-target" class="kw-input" type="text" placeholder="/services/seo-agency/" autocomplete="off" />
+            <div class="rt-field">
+              <label class="rt-label">Target Page URL <span class="rt-optional">(path or full URL)</span></label>
+              <input id="rt-target-url" class="rt-input" type="text" placeholder="/services/seo-agency/" autocomplete="off"/>
             </div>
-            <div class="kw-field">
-              <label class="kw-label">Tag / Category <span class="kw-optional">(optional)</span></label>
-              <input id="kw-f-tag" class="kw-input" type="text" placeholder="e.g. Brand, Service, Location" autocomplete="off" />
+            <div class="rt-field">
+              <label class="rt-label">Business / Service Category</label>
+              <input id="rt-category" class="rt-input" type="text" placeholder="e.g. SEO Agency, Recruitment, HR Tech" autocomplete="off"/>
+            </div>
+            <div class="rt-field rt-field-full">
+              <label class="rt-label">Competitor URLs <span class="rt-optional">(optional — one per line)</span></label>
+              <textarea id="rt-competitors" class="rt-textarea" rows="3" placeholder="https://competitor1.com/seo&#10;https://competitor2.com/services"></textarea>
             </div>
           </div>
-          <div id="kw-form-err" class="kw-form-err" style="display:none"></div>
-          <div class="kw-form-actions">
-            <button id="kw-form-save" class="btn-primary">Save Keyword</button>
-            <button id="kw-form-cancel" class="btn-ghost">Cancel</button>
+          <div id="rt-input-err" class="rt-err" style="display:none"></div>
+          <div class="rt-step-actions">
+            <button id="rt-analyze-btn" class="rt-analyze-btn">🔍 Check GSC &amp; Analyze</button>
           </div>
-          <input type="hidden" id="kw-f-id" value="" />
         </div>
       </div>
 
-      <!-- Filter bar -->
-      <div class="kw-filter-bar" id="kw-filter-bar" style="display:none">
-        <select id="kw-filter-country" class="kw-filter-sel">
-          <option value="">All Countries</option>
-        </select>
-        <select id="kw-filter-tag" class="kw-filter-sel">
-          <option value="">All Tags</option>
-        </select>
-        <span class="kw-filter-count" id="kw-filter-count"></span>
-        <button id="kw-snapshot-btn" class="btn-ghost kw-snapshot-btn" title="Save current GSC positions to history">📸 Snapshot</button>
+      <!-- Step 2: Current Ranking Check -->
+      <div class="rt-step-card" id="rt-gsc-card" style="display:none">
+        <div class="rt-step-hd">
+          <span class="rt-step-num">2</span>
+          <span class="rt-step-label">Current Ranking Check</span>
+        </div>
+        <div class="rt-step-body" id="rt-gsc-body"></div>
       </div>
 
-      <!-- Table output -->
-      <div id="kw-table-wrap"></div>
+      <!-- Step 3+4: Ranking Gap Diagnosis + Blueprint -->
+      <div class="rt-step-card" id="rt-gap-card" style="display:none">
+        <div class="rt-step-hd">
+          <span class="rt-step-num">3</span>
+          <span class="rt-step-label">Ranking Gap Diagnosis + Page 1 Blueprint</span>
+          <button id="rt-gap-run-btn" class="rt-run-btn">🤖 Run AI Diagnosis</button>
+        </div>
+        <div class="rt-step-body" id="rt-gap-body">
+          <div class="rt-ai-hint">Click "Run AI Diagnosis" to analyse why this keyword isn't on Page 1 and get a prioritized blueprint.</div>
+        </div>
+      </div>
 
-      <!-- Empty state -->
-      <div id="kw-empty" class="kw-empty">
-        <div class="kw-empty-icon">🔍</div>
-        <div class="kw-empty-title">No keywords tracked yet</div>
-        <div class="kw-empty-sub">Add keywords above to monitor positions from GSC data and track GEO readiness over time.</div>
+      <!-- Step 5: Auto Fix Suggestions -->
+      <div class="rt-step-card" id="rt-fix-card" style="display:none">
+        <div class="rt-step-hd">
+          <span class="rt-step-num">5</span>
+          <span class="rt-step-label">Auto Fix Suggestions</span>
+          <button id="rt-fix-run-btn" class="rt-run-btn">✍️ Generate Copy-Ready Fixes</button>
+        </div>
+        <div class="rt-step-body" id="rt-fix-body">
+          <div class="rt-ai-hint">Generate copy-ready title, meta, H1, intro paragraph, FAQ, schema, and GEO answer block for this keyword.</div>
+        </div>
+      </div>
+
+      <!-- Step 6: Ranking Mission / Progress Tracker -->
+      <div class="rt-step-card" id="rt-mission-card" style="display:none">
+        <div class="rt-step-hd">
+          <span class="rt-step-num">6</span>
+          <span class="rt-step-label">Ranking Mission</span>
+          <button id="rt-save-mission-btn" class="rt-run-btn">💾 Save as Mission</button>
+        </div>
+        <div class="rt-step-body" id="rt-mission-body">
+          <div class="rt-ai-hint">Save this analysis as a Ranking Mission to track position progress over time and mark tasks as done.</div>
+        </div>
       </div>
 
     </div>

@@ -817,6 +817,156 @@ Use only paths from the "OTHER PAGES" list above. If fewer than 5 pages are avai
 Plain text (no code). For each section above, one bullet explaining: what was changed, what it fixes, and which ranking factor it improves. Suitable for sending to a developer or content manager.`;
   }
 
+  if (task === 'rank-gap-diagnosis') {
+    const { keyword, country, targetPage, category, competitors, position, rankingPage, clicks, impressions, ctr } = data;
+    const fmtCtr = n => (n && !isNaN(n)) ? (Number(n) * 100).toFixed(1) + '%' : '0%';
+    const posText = position ? `#${position}` : 'Not ranking (outside top 100)';
+    const rankingPageText = rankingPage || 'No page found in GSC';
+    const targetPageText = targetPage || 'Not specified';
+
+    return `You are an expert SEO consultant. Diagnose why the target page is not ranking on Page 1 for the target keyword, and produce a prioritized action blueprint.
+
+=== TARGET ===
+Keyword: ${keyword}
+Country: ${country}
+Target Page: ${targetPageText}
+Business/Service Category: ${category || 'Not specified'}
+Current Position: ${posText}
+Ranking Page (GSC): ${rankingPageText}
+GSC Metrics: ${clicks || 0} clicks, ${impressions || 0} impressions, CTR: ${fmtCtr(ctr)}
+Competitor URLs: ${competitors || 'None provided'}
+
+=== DIAGNOSIS INSTRUCTIONS ===
+Analyse all 10 gap areas. For each area that is a genuine problem, diagnose it and provide a specific fix. Skip areas that are not applicable. Be concrete — name the exact element to change, copy to write, or structure to add.
+
+Gap areas to evaluate:
+1. Search Intent Mismatch — does the page content and format match what users expect for this query?
+2. Weak Title / Meta / H1 — are these optimised for the keyword and compelling to click?
+3. Thin or Off-Target Content — is there enough depth, relevance, and keyword coverage?
+4. Missing FAQ / People Also Ask — are common user questions answered?
+5. Weak Internal Links — is there a topic cluster, does the page receive internal links from related pages?
+6. GEO / AI Readiness — are there answer blocks, FAQ schema, citations, structured data for AI extraction?
+7. E-E-A-T Signals — does the page demonstrate experience, expertise, authority, and trust?
+8. Technical SEO Issues — Core Web Vitals, mobile, indexing, structured data errors
+9. No Topic Cluster — missing supporting pages, pillar strategy, or content silos
+10. Authority / Backlink Gap — is the page under-linked compared to Page 1 results?
+
+=== OUTPUT FORMAT ===
+Use EXACTLY these ## sections in this order.
+
+## Ranking Gap Summary
+2-3 sentences. The #1 reason this keyword is not on Page 1 and the most important action to take first.
+
+## Gap Diagnosis
+For each gap area that is a real problem (skip if not applicable):
+### [Gap Area Name]
+- Current state: [what is wrong or missing]
+- Fix: [exact action — be specific, name elements, copy, structure]
+- Priority: HIGH / MEDIUM / LOW
+
+## Page 1 Ranking Blueprint
+Prioritized action plan using EXACTLY this format for each action:
+
+🔴 HIGH | [Action Title] | Impact: High | Effort: [Low/Med/High]
+– Page: [target page path or URL]
+– Section: [where on the page — e.g. "Title tag", "H1", "Introduction paragraph"]
+– Add: [exactly what to write or add]
+– Why: [why this action moves the needle for this specific keyword]
+
+🟡 MEDIUM | [Action Title] | Impact: Med | Effort: [Low/Med/High]
+– Page: [page]
+– Section: [section]
+– Add: [what to add]
+– Why: [why]
+
+🟢 LOW | [Action Title] | Impact: Low | Effort: [Low/Med/High]
+– Page: [page]
+– Section: [section]
+– Add: [what to add]
+– Why: [why]
+
+Produce at minimum 3 HIGH actions, 3 MEDIUM actions, and 2 LOW actions. Every action must be executable within a week by a content manager or developer.`;
+  }
+
+  if (task === 'rank-auto-fixes') {
+    const { keyword, country, targetPage, category, pageTitle, position } = data;
+    const posText = position ? `Currently ranking at #${position}` : 'Not currently ranking in top 100';
+
+    return `You are an expert SEO copywriter. Generate complete, copy-ready content fixes to help this page rank on Page 1.
+
+=== TARGET ===
+Keyword: ${keyword}
+Country: ${country}
+Target Page: ${targetPage || 'Not specified'}
+Current Page Title: ${pageTitle || 'Unknown'}
+Business/Service Category: ${category || 'Professional services'}
+Ranking Status: ${posText}
+
+=== INSTRUCTIONS ===
+Write REAL copy — no placeholders, no [brackets], no generic examples. Every element must be complete and immediately usable. Character counts must be met exactly.
+
+=== OUTPUT FORMAT ===
+Use EXACTLY these ## headings in this order.
+
+## SEO Title
+The complete replacement <title> tag as HTML. Requirements: 50–60 characters (state the exact count in parentheses), keyword in the first 3 words, brand separator using | at the end. Then one sentence explaining what changed.
+
+## Meta Description
+The complete replacement <meta name="description" content="..."> tag as HTML. Requirements: 140–160 characters (state count), keyword within the first 70 characters, ends with a clear call to action. Then one sentence explaining what changed.
+
+## H1 Tag
+The complete replacement <h1> tag as HTML. Requirements: different wording from the title, naturally contains the keyword, benefit-led and compelling. Then one sentence explaining what changed.
+
+## Intro Paragraph
+A 150–200 word introduction paragraph. Requirements: keyword appears in the first sentence, includes a credibility signal (years, clients, results), ends with a transition sentence. Write it as final copy — no instructions, just the text.
+
+## FAQ Section
+5 questions a real user would type into Google for this keyword. Format as complete HTML using <dl><dt><dd> structure with id attributes for anchor linking. Each answer: 60–80 words, written for both users and AI extraction.
+
+## Internal Link Suggestions
+5 internal link suggestions. Format each as:
+<a href="/suggested-path/">keyword-rich anchor text</a> — Place in: [exact location on page]
+Make the paths realistic for a ${category || 'professional services'} business.
+
+## Schema Markup
+A complete <script type="application/ld+json"> block. Include FAQPage schema (using the FAQs above) and the most appropriate business schema type for "${category || 'professional services'}".
+
+## GEO Answer Block
+A 2–3 sentence paragraph optimised for AI citation and featured snippets. Start the first sentence with the exact keyword phrase. Write it as a direct, factual answer a user would want extracted by an AI.`;
+  }
+
+  if (task === 'rank-roadmap') {
+    const { keyword, country, targetPage, category, position, status, pendingTasks } = data;
+    const posText = position ? `Currently ranking at position #${position}` : 'Not currently ranking in top 100';
+    const statusText = status || 'Unknown';
+    const pendingSection = pendingTasks && pendingTasks !== 'None yet — run AI Diagnosis first'
+      ? `\n=== PENDING BLUEPRINT ACTIONS ===\n${pendingTasks}\n` : '';
+
+    return `You are an expert SEO strategist. Create a realistic 30/60/90-day ranking roadmap for this target keyword.
+
+=== TARGET ===
+Keyword: ${keyword}
+Country: ${country}
+Target Page: ${targetPage || 'Not specified'}
+Business/Service Category: ${category || 'Professional services'}
+Ranking Status: ${posText} (${statusText})
+${pendingSection}
+=== INSTRUCTIONS ===
+Create a concrete, action-oriented 3-phase roadmap. Each phase should build on the previous one. Be specific — name exact actions, not generic advice. Tailor the timeline to the current position: if already ranking Page 2, focus on conversion signals; if not ranking, start with technical fundamentals. If pending blueprint actions are listed above, incorporate them into the appropriate phase. Use bullet points inside each phase.
+
+=== OUTPUT FORMAT ===
+Use EXACTLY these three ## headings. Do not add any other top-level headings.
+
+## Day 30 — Foundation
+What to complete in the first 30 days. Focus on: on-page fixes (title, meta, H1, intro), technical quick wins, and content gap closures. Each action should be completable by one person in a week.
+
+## Day 60 — Authority & Signals
+What to complete in days 31–60. Focus on: internal linking, content depth, schema, external signals (mentions, links), and user engagement improvements.
+
+## Day 90 — Review & Accelerate
+What to complete in days 61–90. Focus on: position snapshot, content refresh based on GSC data, building topical clusters, and conversion rate improvements for ranking pages.`;
+  }
+
   return 'Analyse this page and provide SEO recommendations.';
 }
 

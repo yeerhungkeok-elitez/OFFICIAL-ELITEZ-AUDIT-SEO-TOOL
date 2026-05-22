@@ -3905,454 +3905,1227 @@ function refreshDemo() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// KEYWORD TRACKER MODULE
+// RANK TARGET KEYWORD MODULE
 // ══════════════════════════════════════════════════════════════════════════════
 
-const KW_KEY = 'seoKwTracker_v1';
+const RT_KEY = 'seoRankTarget_v1';
 
-const KW_COUNTRIES = {
+const RT_COUNTRIES = {
   sg: 'Singapore', my: 'Malaysia', id: 'Indonesia', ph: 'Philippines',
   th: 'Thailand',  vn: 'Vietnam',  us: 'USA',       gb: 'UK',
   au: 'Australia', ca: 'Canada',
 };
 
+// ── State ─────────────────────────────────────────────────────────────────────
+
+var rtCurrentData      = null;
+var rtCurrentDiagnosis = '';
+var rtCurrentAutoFix   = '';
+var rtCurrentMissionId = null;
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
-function kwLoad() {
-  try { return JSON.parse(localStorage.getItem(KW_KEY)) || []; } catch { return []; }
+function rtLoad() {
+  try { return JSON.parse(localStorage.getItem(RT_KEY)) || []; } catch { return []; }
 }
 
-function kwSave(kws) {
-  localStorage.setItem(KW_KEY, JSON.stringify(kws));
+function rtSave(missions) {
+  localStorage.setItem(RT_KEY, JSON.stringify(missions));
 }
 
-function kwAdd(data) {
-  const kws = kwLoad();
-  kws.unshift({ id: Date.now(), ...data, history: [] });
-  kwSave(kws);
+function rtGetMission(id) {
+  return rtLoad().find(function(m) { return m.id === id; }) || null;
 }
 
-function kwUpdate(id, data) {
-  const kws = kwLoad();
-  const i   = kws.findIndex(k => k.id === id);
-  if (i !== -1) kws[i] = { ...kws[i], ...data };
-  kwSave(kws);
+function rtSaveMission(mission) {
+  var missions = rtLoad();
+  var idx = missions.findIndex(function(m) { return m.id === mission.id; });
+  if (idx !== -1) { missions[idx] = mission; } else { missions.unshift(mission); }
+  rtSave(missions);
 }
 
-function kwDelete(id) {
-  kwSave(kwLoad().filter(k => k.id !== id));
+function rtDeleteMission(id) {
+  rtSave(rtLoad().filter(function(m) { return m.id !== id; }));
 }
 
-// ── GSC lookup ────────────────────────────────────────────────────────────────
+// ── GSC Lookup (extended) ─────────────────────────────────────────────────────
 
-function kwLookupGsc(keyword, country) {
-  if (!gscRows.length || !gscDims.length) return { position: null, page: null };
+function rtLookupGsc(keyword, country) {
+  var empty = { position: null, page: null, clicks: 0, impressions: 0, ctr: 0 };
+  if (!gscRows.length || !gscDims.length) return empty;
 
-  const qIdx  = gscDims.indexOf('query');
-  const pgIdx = gscDims.indexOf('page');
-  const cIdx  = gscDims.indexOf('country');
+  var qIdx  = gscDims.indexOf('query');
+  var pgIdx = gscDims.indexOf('page');
+  var cIdx  = gscDims.indexOf('country');
+  if (qIdx === -1) return empty;
 
-  if (qIdx === -1) return { position: null, page: null };
-
-  const norm = keyword.trim().toLowerCase();
-  const rows = gscRows.filter(r => {
-    if ((r.keys?.[qIdx] || '').toLowerCase() !== norm) return false;
+  var norm = keyword.trim().toLowerCase();
+  var rows = gscRows.filter(function(r) {
+    if ((r.keys && r.keys[qIdx] || '').toLowerCase() !== norm) return false;
     if (country && cIdx !== -1) {
-      if ((r.keys?.[cIdx] || '').toLowerCase() !== country.toLowerCase()) return false;
+      if ((r.keys && r.keys[cIdx] || '').toLowerCase() !== country.toLowerCase()) return false;
     }
     return true;
   });
 
-  if (!rows.length) return { position: null, page: null };
+  if (!rows.length) return empty;
 
-  const bestRow = rows.reduce((best, r) =>
-    (r.position || 999) < (best.position || 999) ? r : best, rows[0]);
+  var bestRow = rows.reduce(function(best, r) {
+    return (r.position || 999) < (best.position || 999) ? r : best;
+  }, rows[0]);
 
-  const position = Math.round(bestRow.position) || null;
-  const page     = pgIdx !== -1 ? (bestRow.keys?.[pgIdx] || null) : null;
+  var totClicks = rows.reduce(function(s, r) { return s + (r.clicks || 0); }, 0);
+  var totImpr   = rows.reduce(function(s, r) { return s + (r.impressions || 0); }, 0);
 
-  return { position, page };
+  return {
+    position:    Math.round(bestRow.position) || null,
+    page:        pgIdx !== -1 ? (bestRow.keys && bestRow.keys[pgIdx] || null) : null,
+    clicks:      totClicks,
+    impressions: totImpr,
+    ctr:         totImpr > 0 ? totClicks / totImpr : 0
+  };
 }
 
-// ── Snapshot positions ────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function kwSnapshotAll() {
-  const kws   = kwLoad();
-  const today = new Date().toISOString().slice(0, 10);
-  let updated = 0;
+function rtEsc(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
-  kws.forEach(kw => {
-    const { position, page } = kwLookupGsc(kw.keyword, kw.country);
-    if (position === null) return;
-    const last = kw.history[kw.history.length - 1];
-    if (last && last.date === today) {
-      last.position = position;
-      last.page     = page;
+function rtFmtCtr(ctr) {
+  return (Number(ctr) * 100).toFixed(1) + '%';
+}
+
+function rtPosCls(pos) {
+  if (!pos) return 'rt-pos-none';
+  if (pos <= 3)  return 'rt-pos-top';
+  if (pos <= 10) return 'rt-pos-good';
+  if (pos <= 20) return 'rt-pos-mid';
+  return 'rt-pos-low';
+}
+
+function rtNormPath(s) {
+  try { return new URL(s).pathname.replace(/\/$/, '').toLowerCase(); } catch { return String(s || '').replace(/\/$/, '').toLowerCase(); }
+}
+
+
+// ── GSC Check Renderer ────────────────────────────────────────────────────────
+
+function rtRenderGscCheck(gscData, targetPage) {
+  if (!gscRows.length) {
+    return '<div class="rt-gsc-notice rt-gsc-warn">⚠️ GSC data not loaded — connect Google Search Console in the Search Performance tab to see live rankings.</div>'
+      + '<div class="rt-gsc-no-data">Analysis will proceed using keyword input only. AI diagnosis will still work without live GSC data.</div>';
+  }
+
+  var pos    = gscData.position;
+  var page   = gscData.page;
+  var posCls = rtPosCls(pos);
+
+  var targetMatchHtml = '';
+  if (targetPage && page) {
+    var match = rtNormPath(page) === rtNormPath(targetPage);
+    targetMatchHtml = ' <span class="' + (match ? 'rt-match-yes' : 'rt-match-no') + '">'
+      + (match ? '✓ Matches target page' : '✗ Different page is ranking') + '</span>';
+  }
+
+  var pageDisp = page ? (rtNormPath(page) || '/') : null;
+
+  var posMsg = '';
+  if (!pos) {
+    posMsg = '<div class="rt-gsc-msg rt-gsc-msg-warn">Not found in GSC data. The keyword may be ranking beyond position 100, or may have no impressions in the selected period.</div>';
+  } else if (pos > 10) {
+    posMsg = '<div class="rt-gsc-msg rt-gsc-msg-info">Position ' + pos + ' — outside Page 1. The gap diagnosis below will identify what\'s holding it back.</div>';
+  } else {
+    posMsg = '<div class="rt-gsc-msg rt-gsc-msg-good">Position ' + pos + ' — already on Page 1! Use the diagnosis to push toward the top 3.</div>';
+  }
+
+  return '<div class="rt-gsc-grid">'
+    + '<div class="rt-gsc-kpi"><div class="rt-gsc-kpi-val ' + posCls + '">' + (pos ? '#' + pos : 'N/A') + '</div><div class="rt-gsc-kpi-label">Current Position</div></div>'
+    + '<div class="rt-gsc-kpi"><div class="rt-gsc-kpi-val">' + (gscData.impressions || 0).toLocaleString() + '</div><div class="rt-gsc-kpi-label">Impressions</div></div>'
+    + '<div class="rt-gsc-kpi"><div class="rt-gsc-kpi-val">' + (gscData.clicks || 0).toLocaleString() + '</div><div class="rt-gsc-kpi-label">Clicks</div></div>'
+    + '<div class="rt-gsc-kpi"><div class="rt-gsc-kpi-val">' + rtFmtCtr(gscData.ctr) + '</div><div class="rt-gsc-kpi-label">CTR</div></div>'
+    + '</div>'
+    + (pageDisp
+        ? '<div class="rt-gsc-page-row"><span class="rt-gsc-page-label">Ranking page:</span> <a href="' + rtEsc(page) + '" target="_blank" rel="noopener" class="rt-gsc-page-link">' + rtEsc(pageDisp) + '</a>' + targetMatchHtml + '</div>'
+        : '<div class="rt-gsc-page-row rt-gsc-page-none">No ranking page found in GSC data for this keyword.</div>')
+    + posMsg;
+}
+
+// ── AI Output Renderer ────────────────────────────────────────────────────────
+
+function rtRenderAIOutput(md) {
+  var html = md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  html = html.replace(/```[\w]*\n([\s\S]*?)```/g, function(_, code) {
+    return '<pre class="rt-code-block"><code>' + code + '</code></pre>';
+  });
+
+  html = html.replace(/^## (.+)$/gm, '</div><div class="rt-ai-section"><h3 class="rt-ai-h3">$1</h3>');
+  html = html.replace(/^### (.+)$/gm, '<h4 class="rt-ai-h4">$1</h4>');
+
+  html = html.replace(/^(🔴|🟡|🟢)\s*(HIGH|MEDIUM|LOW)\s*\|\s*(.+?)\s*\|\s*Impact:\s*(.+?)\s*\|\s*Effort:\s*(.+)$/gm, function(_, emoji, tier, title, impact, effort) {
+    var cls = tier === 'HIGH' ? 'rt-act-high' : tier === 'MEDIUM' ? 'rt-act-med' : 'rt-act-low';
+    return '<div class="rt-action-block ' + cls + '"><div class="rt-action-hdr">'
+      + emoji + ' <span class="rt-action-tier">' + tier + '</span> — ' + title + '</div>'
+      + '<div class="rt-action-meta"><span class="rt-meta-badge rt-meta-impact">Impact: ' + rtEsc(impact) + '</span>'
+      + '<span class="rt-meta-badge rt-meta-effort">Effort: ' + rtEsc(effort) + '</span></div>';
+  });
+
+  html = html.replace(/^[–\-]\s*(Page|Section|Add|Replace|Why|Fix|Current state|Priority):\s*(.*)$/gm, function(_, label, val) {
+    if (label === 'Add' || label === 'Replace') {
+      return '<div class="rt-action-field rt-action-add"><span class="rt-field-label">' + rtEsc(label) + ':</span> <code class="rt-add-code">' + val + '</code></div>';
+    }
+    if (label === 'Priority') {
+      var pc = val.trim() === 'HIGH' ? 'rt-priority-high' : val.trim() === 'MEDIUM' ? 'rt-priority-med' : 'rt-priority-low';
+      return '<div class="rt-action-field"><span class="rt-field-label">' + rtEsc(label) + ':</span> <span class="' + pc + '">' + rtEsc(val) + '</span></div>';
+    }
+    return '<div class="rt-action-field"><span class="rt-field-label">' + rtEsc(label) + ':</span> ' + val + '</div>';
+  });
+
+  html = html.replace(/^[ \t]*[-•]\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, '<ul>$&</ul>');
+  html = html.replace(/^(?!<)(.+)$/gm, '<p>$1</p>');
+
+  html = '<div class="rt-ai-content"><div></div><div>' + html + '</div></div>';
+  return html;
+}
+
+// ── Analyze ───────────────────────────────────────────────────────────────────
+
+function rtAnalyze() {
+  var kwEl   = document.getElementById('rt-kw');
+  var ctrEl  = document.getElementById('rt-country');
+  var tgtEl  = document.getElementById('rt-target-url');
+  var catEl  = document.getElementById('rt-category');
+  var compEl = document.getElementById('rt-competitors');
+  var errEl  = document.getElementById('rt-input-err');
+
+  var keyword    = (kwEl   && kwEl.value   || '').trim();
+  var country    = (ctrEl  && ctrEl.value  || '').trim();
+  var targetPage = (tgtEl  && tgtEl.value  || '').trim();
+  var category   = (catEl  && catEl.value  || '').trim();
+  var compText   = (compEl && compEl.value || '').trim();
+
+  if (!keyword) {
+    if (errEl) { errEl.textContent = 'Target keyword is required.'; errEl.style.display = ''; }
+    if (kwEl) kwEl.focus();
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+
+  var competitors = compText ? compText.split('\n').map(function(s) { return s.trim(); }).filter(Boolean) : [];
+  var gscData     = rtLookupGsc(keyword, country);
+
+  rtCurrentData      = { keyword: keyword, country: country, targetPage: targetPage, category: category, competitors: competitors, gscData: gscData };
+  rtCurrentDiagnosis = '';
+  rtCurrentAutoFix   = '';
+  rtCurrentMissionId = null;
+
+  var gscCard = document.getElementById('rt-gsc-card');
+  var gscBody = document.getElementById('rt-gsc-body');
+  if (gscCard && gscBody) { gscCard.style.display = ''; gscBody.innerHTML = rtRenderGscCheck(gscData, targetPage); }
+
+  var gapCard = document.getElementById('rt-gap-card');
+  var gapBody = document.getElementById('rt-gap-body');
+  if (gapCard && gapBody) {
+    gapCard.style.display = '';
+    gapBody.innerHTML = '<div class="rt-ai-hint">Click "Run AI Diagnosis" to analyse why this keyword isn\'t on Page 1 and get a prioritized blueprint.</div>';
+    var runBtn = document.getElementById('rt-gap-run-btn');
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🤖 Run AI Diagnosis'; }
+  }
+
+  var fixCard = document.getElementById('rt-fix-card');
+  var fixBody = document.getElementById('rt-fix-body');
+  if (fixCard && fixBody) {
+    fixCard.style.display = '';
+    fixBody.innerHTML = '<div class="rt-ai-hint">Generate copy-ready title, meta, H1, FAQ, schema, and GEO answer block for this keyword.</div>';
+    var fixBtn = document.getElementById('rt-fix-run-btn');
+    if (fixBtn) { fixBtn.disabled = false; fixBtn.textContent = '✍️ Generate Copy-Ready Fixes'; }
+  }
+
+  var missionCard = document.getElementById('rt-mission-card');
+  var missionBody = document.getElementById('rt-mission-body');
+  if (missionCard && missionBody) { missionCard.style.display = ''; missionBody.innerHTML = rtRenderMissionProgress(null); }
+
+  var saveMissionBtn = document.getElementById('rt-save-mission-btn');
+  if (saveMissionBtn) saveMissionBtn.textContent = '💾 Save as Mission';
+
+  if (gscCard) gscCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Stream Gap Diagnosis ──────────────────────────────────────────────────────
+
+async function rtStreamDiagnosis() {
+  if (!rtCurrentData) return;
+  var btn    = document.getElementById('rt-gap-run-btn');
+  var bodyEl = document.getElementById('rt-gap-body');
+  if (!bodyEl) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+  bodyEl.innerHTML = '<div class="rt-ai-streaming"><span class="rt-streaming-dot"></span> AI is diagnosing ranking gaps…</div>';
+
+  var cd = rtCurrentData;
+  var payload = {
+    task:        'rank-gap-diagnosis',
+    keyword:     cd.keyword,
+    country:     RT_COUNTRIES[cd.country] || cd.country || 'Any',
+    targetPage:  cd.targetPage  || '(not specified)',
+    category:    cd.category    || '(not specified)',
+    competitors: cd.competitors.join('\n') || 'None provided',
+    position:    cd.gscData.position,
+    rankingPage: cd.gscData.page,
+    clicks:      cd.gscData.clicks,
+    impressions: cd.gscData.impressions,
+    ctr:         cd.gscData.ctr
+  };
+
+  try {
+    var res = await fetch('/api/agent/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok || !res.body) {
+      bodyEl.innerHTML = '<div class="rt-error">⚠️ Request failed. Check your Anthropic API key and server.</div>';
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Run AI Diagnosis'; }
+      return;
+    }
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    rtCurrentDiagnosis = '';
+    while (true) {
+      var rd = await reader.read();
+      if (rd.done) break;
+      buffer += decoder.decode(rd.value, { stream: true });
+      var lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line.startsWith('data:')) continue;
+        var raw = line.slice(5).trim();
+        if (!raw) continue;
+        try {
+          var d = JSON.parse(raw);
+          if (d.type === 'chunk') { rtCurrentDiagnosis += d.text; bodyEl.innerHTML = rtRenderAIOutput(rtCurrentDiagnosis); }
+          if (d.type === 'error') {
+            bodyEl.innerHTML = '<div class="rt-error">⚠️ ' + rtEsc(d.message || 'AI error') + '</div>';
+            if (btn) { btn.disabled = false; btn.textContent = '🤖 Run AI Diagnosis'; }
+            return;
+          }
+        } catch(e) {}
+      }
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run Diagnosis'; }
+    if (rtCurrentMissionId) {
+      var mission = rtGetMission(rtCurrentMissionId);
+      if (mission) { mission.lastDiagnosis = rtCurrentDiagnosis; mission.tasks = rtExtractTasks(rtCurrentDiagnosis); rtSaveMission(mission); rtRefreshMissionBody(); }
+    }
+  } catch(err) {
+    bodyEl.innerHTML = '<div class="rt-error">⚠️ Network error: ' + rtEsc(err.message) + '</div>';
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Run AI Diagnosis'; }
+  }
+}
+
+// ── Stream Auto Fixes ─────────────────────────────────────────────────────────
+
+async function rtStreamAutoFixes() {
+  if (!rtCurrentData) return;
+  var btn    = document.getElementById('rt-fix-run-btn');
+  var bodyEl = document.getElementById('rt-fix-body');
+  if (!bodyEl) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  bodyEl.innerHTML = '<div class="rt-ai-streaming"><span class="rt-streaming-dot"></span> Generating copy-ready fixes…</div>';
+
+  var cd = rtCurrentData;
+  var pageTitle = '';
+  if (cd.targetPage && allPages.length) {
+    var pg = allPages.find(function(p) { return rtNormPath(p.path || p.url || '') === rtNormPath(cd.targetPage); });
+    if (pg) pageTitle = pg.title || '';
+  }
+
+  var payload = {
+    task:       'rank-auto-fixes',
+    keyword:    cd.keyword,
+    country:    RT_COUNTRIES[cd.country] || cd.country || 'Any',
+    targetPage: cd.targetPage || '(not specified)',
+    category:   cd.category   || '(not specified)',
+    pageTitle:  pageTitle     || '(unknown)',
+    position:   cd.gscData.position
+  };
+
+  try {
+    var res2 = await fetch('/api/agent/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res2.ok || !res2.body) {
+      bodyEl.innerHTML = '<div class="rt-error">⚠️ Request failed. Check your Anthropic API key and server.</div>';
+      if (btn) { btn.disabled = false; btn.textContent = '✍️ Generate Copy-Ready Fixes'; }
+      return;
+    }
+    var reader2 = res2.body.getReader();
+    var decoder2 = new TextDecoder();
+    var buffer2 = '';
+    rtCurrentAutoFix = '';
+    while (true) {
+      var rd2 = await reader2.read();
+      if (rd2.done) break;
+      buffer2 += decoder2.decode(rd2.value, { stream: true });
+      var lines2 = buffer2.split('\n');
+      buffer2 = lines2.pop();
+      for (var j = 0; j < lines2.length; j++) {
+        var line2 = lines2[j].trim();
+        if (!line2.startsWith('data:')) continue;
+        var raw2 = line2.slice(5).trim();
+        if (!raw2) continue;
+        try {
+          var d2 = JSON.parse(raw2);
+          if (d2.type === 'chunk') { rtCurrentAutoFix += d2.text; bodyEl.innerHTML = rtRenderAIOutput(rtCurrentAutoFix); }
+          if (d2.type === 'error') {
+            bodyEl.innerHTML = '<div class="rt-error">⚠️ ' + rtEsc(d2.message || 'AI error') + '</div>';
+            if (btn) { btn.disabled = false; btn.textContent = '✍️ Generate Copy-Ready Fixes'; }
+            return;
+          }
+        } catch(e) {}
+      }
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate Fixes'; }
+  } catch(err) {
+    bodyEl.innerHTML = '<div class="rt-error">⚠️ Network error: ' + rtEsc(err.message) + '</div>';
+    if (btn) { btn.disabled = false; btn.textContent = '✍️ Generate Copy-Ready Fixes'; }
+  }
+}
+
+// ── Extract Tasks ─────────────────────────────────────────────────────────────
+
+function rtExtractTasks(diagnosisText) {
+  var tasks = [];
+  var lines = diagnosisText.split('\n');
+  lines.forEach(function(line) {
+    var m = line.match(/^[🔴🟡🟢]\s*(HIGH|MEDIUM|LOW)\s*\|\s*(.+?)\s*\|/);
+    if (m) {
+      tasks.push({ id: 'rt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), priority: m[1], title: m[2].trim(), done: false });
+    }
+  });
+  return tasks;
+}
+
+// ── Mission Progress Renderer (updated with fix tracking + roadmap + export) ──
+
+function rtRenderMissionProgress(mission) {
+  if (!mission) {
+    return '<div class="rt-mission-empty"><p>No mission saved yet. Run the analysis above, then click "Save as Mission" to track this keyword\'s progress over time.</p></div>';
+  }
+  var tasks  = mission.tasks || [];
+  var done   = tasks.filter(function(t) { return t.done; }).length;
+  var total  = tasks.length;
+  var pct    = total > 0 ? Math.round(done / total * 100) : 0;
+  var status = rtGetMissionStatus(mission);
+
+  var histHtml = '';
+  if (mission.history && mission.history.length) {
+    var rows = mission.history.slice().reverse().slice(0, 8).map(function(h, i, arr) {
+      var prev  = arr[i + 1];
+      var delta = (prev && prev.position && h.position) ? prev.position - h.position : 0;
+      var arrow = delta > 0 ? '<span class="rt-trend-up">↑' + delta + '</span>'
+                : delta < 0 ? '<span class="rt-trend-down">↓' + Math.abs(delta) + '</span>' : '';
+      return '<tr><td>' + rtEsc(h.date) + '</td><td><strong>' + (h.position ? '#' + h.position : '—') + '</strong> ' + arrow + '</td>'
+        + '<td>' + (h.clicks || 0) + '</td><td>' + (h.impressions || 0) + '</td></tr>';
+    }).join('');
+    histHtml = '<table class="rt-hist-table"><thead><tr><th>Date</th><th>Position</th><th>Clicks</th><th>Impr.</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } else {
+    histHtml = '<p class="rt-mission-empty-sub">No history yet — click "📸 Record Position" to save today\'s GSC data.</p>';
+  }
+
+  var tasksHtml = '';
+  if (tasks.length) {
+    tasksHtml = tasks.map(function(t) {
+      var pCls = t.priority === 'HIGH' ? 'rt-tier-high' : t.priority === 'MEDIUM' ? 'rt-tier-med' : 'rt-tier-low';
+      return '<label class="rt-task-row' + (t.done ? ' rt-task-done' : '') + '">'
+        + '<input type="checkbox" class="rt-task-check" data-task-id="' + rtEsc(t.id) + '"' + (t.done ? ' checked' : '') + '/>'
+        + '<span class="rt-task-tier ' + pCls + '">' + rtEsc(t.priority) + '</span>'
+        + '<span class="rt-task-title">' + rtEsc(t.title) + '</span></label>';
+    }).join('');
+  } else {
+    tasksHtml = '<p class="rt-mission-empty-sub">Run AI Diagnosis to generate action tasks for this mission.</p>';
+  }
+
+  return '<div class="rt-mission-wrap">'
+    + '<div class="rt-mission-meta">'
+    + '<div class="rt-mission-kw">' + rtEsc(mission.keyword) + '</div>'
+    + (mission.targetPage ? '<div class="rt-mission-page">Target: ' + rtEsc(mission.targetPage) + '</div>' : '')
+    + '<span class="rt-status-badge ' + status.cls + '">' + status.label + '</span>'
+    + '<div class="rt-mission-date">Saved: ' + rtEsc(mission.createdAt) + '</div>'
+    + '</div>'
+    + '<div class="rt-mission-progress-bar-wrap"><div class="rt-mission-progress-bar" style="width:' + pct + '%"></div></div>'
+    + '<div class="rt-mission-progress-label">' + done + ' / ' + total + ' tasks done (' + pct + '%)</div>'
+
+    // Two-column: history + tasks
+    + '<div class="rt-mission-cols">'
+    + '<div class="rt-mission-col"><div class="rt-mission-col-hd">Position History</div>'
+    + '<div class="rt-mission-toolbar"><button id="rt-snapshot-btn" class="btn-ghost rt-sm-btn">📸 Record Position</button></div>'
+    + histHtml + '</div>'
+    + '<div class="rt-mission-col"><div class="rt-mission-col-hd">Action Tasks</div>'
+    + '<div class="rt-task-list">' + tasksHtml + '</div></div>'
+    + '</div>'
+
+    // Fix completion tracking
+    + rtRenderFixTracking(mission)
+
+    // 30/60/90 roadmap
+    + rtRenderRoadmap(mission)
+
+    // Export
+    + '<div class="rt-export-bar">'
+    + '<span class="rt-export-label">Export Report:</span>'
+    + '<button class="btn-ghost rt-sm-btn rt-export-mission-btn" data-format="html">⬇ HTML</button>'
+    + '<button class="btn-ghost rt-sm-btn rt-export-mission-btn" data-format="md">⬇ Markdown</button>'
+    + '</div>'
+    + '</div>';
+}
+
+// ── Save / Update Mission ─────────────────────────────────────────────────────
+
+function rtSaveAsMission() {
+  if (!rtCurrentData) return;
+  var today = new Date().toISOString().slice(0, 10);
+  var cd    = rtCurrentData;
+  var mission;
+
+  if (rtCurrentMissionId) {
+    mission = rtGetMission(rtCurrentMissionId) || {};
+  } else {
+    mission = {
+      id: Date.now(), keyword: cd.keyword, country: cd.country,
+      targetPage: cd.targetPage, category: cd.category, competitors: cd.competitors,
+      createdAt: today, history: [], tasks: [],
+      fixChecks: { title_meta: false, h1: false, intro: false, faq: false, links: false, schema: false, geo: false },
+      roadmap: { day30: '', day60: '', day90: '' }
+    };
+    rtCurrentMissionId = mission.id;
+  }
+
+  // Ensure new fields exist on older missions
+  if (!mission.fixChecks) mission.fixChecks = { title_meta: false, h1: false, intro: false, faq: false, links: false, schema: false, geo: false };
+  if (!mission.roadmap)   mission.roadmap   = { day30: '', day60: '', day90: '' };
+
+  mission.keyword       = cd.keyword;
+  mission.targetPage    = cd.targetPage;
+  mission.category      = cd.category;
+  mission.competitors   = cd.competitors;
+  mission.lastDiagnosis = rtCurrentDiagnosis || mission.lastDiagnosis || '';
+  mission.lastAutoFix   = rtCurrentAutoFix   || mission.lastAutoFix   || '';
+  if (rtCurrentDiagnosis) mission.tasks = rtExtractTasks(rtCurrentDiagnosis);
+
+  if (cd.gscData.position) {
+    if (!mission.history) mission.history = [];
+    var existing = mission.history.find(function(h) { return h.date === today; });
+    if (existing) {
+      existing.position = cd.gscData.position; existing.page = cd.gscData.page;
+      existing.clicks = cd.gscData.clicks; existing.impressions = cd.gscData.impressions;
     } else {
-      kw.history.push({ date: today, position, page });
+      mission.history.push({ date: today, position: cd.gscData.position, page: cd.gscData.page, clicks: cd.gscData.clicks, impressions: cd.gscData.impressions });
     }
-    updated++;
-  });
-
-  kwSave(kws);
-  return updated;
-}
-
-// ── GEO for page ──────────────────────────────────────────────────────────────
-
-function kwGeoForPage(pageUrl) {
-  if (!pageUrl || !allPages.length) return null;
-  let path;
-  try { path = new URL(pageUrl).pathname; } catch { path = pageUrl; }
-  const page = allPages.find(p => {
-    const pp = p.path || p.url || '';
-    return pp === path || pp === pageUrl || (p.url && p.url.includes(path));
-  });
-  if (!page || !page.checks?.length) return null;
-  return calcGeoScore(page);
-}
-
-// ── Trend ─────────────────────────────────────────────────────────────────────
-
-function kwTrend(history) {
-  if (history.length < 2) return { arrow: '\u2014', delta: 0, cls: 'kw-trend-flat' };
-  const prev = history[history.length - 2].position;
-  const curr = history[history.length - 1].position;
-  if (!prev || !curr) return { arrow: '\u2014', delta: 0, cls: 'kw-trend-flat' };
-  const delta = prev - curr;
-  if (delta > 0)  return { arrow: '\u2191' + delta, delta, cls: 'kw-trend-up' };
-  if (delta < 0)  return { arrow: '\u2193' + Math.abs(delta), delta, cls: 'kw-trend-down' };
-  return { arrow: '\u2192', delta: 0, cls: 'kw-trend-flat' };
-}
-
-// ── Filter state ──────────────────────────────────────────────────────────────
-
-let kwFilterCountry = '';
-let kwFilterTag     = '';
-
-// ── Render ────────────────────────────────────────────────────────────────────
-
-function kwRender() {
-  const allKws = kwLoad();
-  const kws    = allKws.filter(k => {
-    if (kwFilterCountry && k.country !== kwFilterCountry) return false;
-    if (kwFilterTag     && k.tag     !== kwFilterTag)     return false;
-    return true;
-  });
-
-  const empty   = document.getElementById('kw-empty');
-  const tblWrap = document.getElementById('kw-table-wrap');
-  const fbar    = document.getElementById('kw-filter-bar');
-
-  if (!tblWrap) return;
-
-  if (allKws.length === 0) {
-    if (empty)   empty.style.display = '';
-    tblWrap.innerHTML = '';
-    if (fbar)    fbar.style.display  = 'none';
-    return;
   }
 
-  if (empty) empty.style.display = 'none';
-  if (fbar)  fbar.style.display  = '';
+  rtSaveMission(mission);
+  rtRefreshMissionBody();
+  var btn = document.getElementById('rt-save-mission-btn');
+  if (btn) { btn.textContent = '✓ Mission Saved'; setTimeout(function() { btn.textContent = '💾 Update Mission'; }, 2000); }
+}
 
-  kwPopulateFilters(allKws);
-
-  const countEl = document.getElementById('kw-filter-count');
-  if (countEl) countEl.textContent = `${kws.length} of ${allKws.length} keyword${allKws.length !== 1 ? 's' : ''}`;
-
-  if (kws.length === 0) {
-    tblWrap.innerHTML = '<div class="kw-no-match">No keywords match the selected filters.</div>';
-    return;
+function rtSnapshotPosition() {
+  if (!rtCurrentData || !rtCurrentMissionId) return;
+  var mission = rtGetMission(rtCurrentMissionId);
+  if (!mission) return;
+  var today   = new Date().toISOString().slice(0, 10);
+  var gscData = rtLookupGsc(rtCurrentData.keyword, rtCurrentData.country);
+  rtCurrentData.gscData = gscData;
+  if (!mission.history) mission.history = [];
+  var existing = mission.history.find(function(h) { return h.date === today; });
+  if (existing) {
+    existing.position = gscData.position; existing.page = gscData.page;
+    existing.clicks = gscData.clicks; existing.impressions = gscData.impressions;
+  } else {
+    mission.history.push({ date: today, position: gscData.position, page: gscData.page, clicks: gscData.clicks, impressions: gscData.impressions });
   }
+  rtSaveMission(mission);
+  rtRefreshMissionBody();
+}
 
-  tblWrap.innerHTML = `
-    <div class="kw-table-scroll">
-      <table class="kw-table">
-        <thead>
-          <tr>
-            <th>Keyword</th>
-            <th>Country</th>
-            <th>Tag</th>
-            <th class="kw-tc">Position</th>
-            <th>Ranking Page</th>
-            <th class="kw-tc">Target</th>
-            <th class="kw-tc">Trend</th>
-            <th class="kw-tc">GEO</th>
-            <th class="kw-tc">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="kw-tbody">${kws.map(kw => kwBuildRow(kw)).join('')}</tbody>
-      </table>
-    </div>`;
+function rtRefreshMissionBody() {
+  var missionBody = document.getElementById('rt-mission-body');
+  if (!missionBody || !rtCurrentMissionId) return;
+  var mission = rtGetMission(rtCurrentMissionId);
+  missionBody.innerHTML = rtRenderMissionProgress(mission);
+  rtBindTaskChecks();
+  rtBindSnapshotBtn();
+  rtBindFixChecks();
+  rtBindRoadmapFields();
+  rtBindRoadmapGenerateBtn();
+  rtBindExportBtns();
+}
 
-  document.querySelectorAll('.kw-row-main').forEach(row => {
-    row.addEventListener('click', e => {
-      if (e.target.closest('.kw-actions')) return;
-      const id  = Number(row.dataset.id);
-      const det = document.getElementById('kw-detail-' + id);
-      if (!det) return;
-      const open = det.style.display !== 'none';
-      det.style.display = open ? 'none' : '';
-      row.classList.toggle('kw-row-open', !open);
-    });
-  });
-
-  document.querySelectorAll('.kw-edit-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      kwOpenForm(Number(btn.dataset.id));
-    });
-  });
-
-  document.querySelectorAll('.kw-delete-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const id = Number(btn.dataset.id);
-      const kw = kwLoad().find(k => k.id === id);
-      if (kw && confirm('Delete "' + kw.keyword + '"?')) {
-        kwDelete(id);
-        kwRender();
+function rtBindTaskChecks() {
+  document.querySelectorAll('.rt-task-check').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+      if (!rtCurrentMissionId) return;
+      var mission = rtGetMission(rtCurrentMissionId);
+      if (!mission) return;
+      var task = (mission.tasks || []).find(function(t) { return t.id === cb.dataset.taskId; });
+      if (task) {
+        task.done = cb.checked;
+        rtSaveMission(mission);
+        var row = cb.closest('.rt-task-row');
+        if (row) row.classList.toggle('rt-task-done', cb.checked);
       }
     });
   });
 }
 
-function kwBuildRow(kw) {
-  const { position, page } = kwLookupGsc(kw.keyword, kw.country);
-  const trend    = kwTrend(kw.history);
-  const geo      = page ? kwGeoForPage(page) : null;
-  const geoScore = geo ? geo.score : null;
-
-  let targetMatch = '\u2014';
-  let targetCls   = '';
-  if (kw.targetPage && page) {
-    let pagePath;
-    try { pagePath = new URL(page).pathname; } catch { pagePath = page; }
-    const norm  = s => s.replace(/\/$/, '').toLowerCase();
-    const match = norm(pagePath) === norm(kw.targetPage);
-    targetMatch = match ? '\u2713' : '\u2717';
-    targetCls   = match ? 'kw-target-yes' : 'kw-target-no';
-  }
-
-  let posTxt = '\u2014';
-  let posCls = '';
-  if (position !== null) {
-    posTxt = '#' + position;
-    posCls = position <= 3 ? 'kw-pos-top' : position <= 10 ? 'kw-pos-good' : position <= 20 ? 'kw-pos-mid' : 'kw-pos-low';
-  }
-
-  let pageDisp = '\u2014';
-  let pageFull = '';
-  if (page) {
-    try { pageDisp = new URL(page).pathname || '/'; } catch { pageDisp = page; }
-    pageFull = page;
-  }
-
-  const countryLabel = kw.country ? (KW_COUNTRIES[kw.country] || kw.country.toUpperCase()) : '\u2014';
-
-  let geoDisp = '\u2014';
-  let geoCls  = '';
-  if (geoScore !== null) {
-    geoDisp = '' + geoScore;
-    geoCls  = geoScore >= 70 ? 'kw-geo-good' : geoScore >= 50 ? 'kw-geo-mid' : 'kw-geo-low';
-  }
-
-  const detailHtml = kwBuildDetail(kw, { position, page, geo, trend });
-
-  return `
-    <tr class="kw-row-main" data-id="${kw.id}">
-      <td class="kw-cell-kw">
-        <span class="kw-expand-icon">\u25b6</span>
-        <span class="kw-keyword-text">${esc(kw.keyword)}</span>
-      </td>
-      <td class="kw-cell-country">${esc(countryLabel)}</td>
-      <td>${kw.tag ? '<span class="kw-tag-pill">' + esc(kw.tag) + '</span>' : '<span class="kw-no-data">\u2014</span>'}</td>
-      <td class="kw-tc"><span class="kw-pos ${posCls}">${posTxt}</span></td>
-      <td class="kw-cell-page">${page
-        ? '<a href="' + esc(pageFull) + '" target="_blank" rel="noopener" class="kw-page-link" title="' + esc(pageFull) + '">' + esc(pageDisp) + '</a>'
-        : '<span class="kw-no-data">\u2014</span>'}</td>
-      <td class="kw-tc"><span class="${targetCls}">${targetMatch}</span></td>
-      <td class="kw-tc"><span class="${trend.cls}">${trend.arrow}</span></td>
-      <td class="kw-tc"><span class="kw-geo ${geoCls}">${geoDisp}</span></td>
-      <td class="kw-tc kw-actions">
-        <button class="kw-edit-btn kw-action-btn" data-id="${kw.id}" title="Edit">\u270f\ufe0f</button>
-        <button class="kw-delete-btn kw-action-btn" data-id="${kw.id}" title="Delete">\uD83D\uDDD1\uFE0F</button>
-      </td>
-    </tr>
-    <tr class="kw-row-detail" id="kw-detail-${kw.id}" style="display:none">
-      <td colspan="9">${detailHtml}</td>
-    </tr>`;
+function rtBindSnapshotBtn() {
+  var btn = document.getElementById('rt-snapshot-btn');
+  if (!btn) return;
+  btn.addEventListener('click', function() {
+    rtSnapshotPosition();
+    btn.textContent = '✓ Recorded';
+    setTimeout(function() { btn.textContent = '📸 Record Position'; }, 2000);
+  });
 }
 
-function kwBuildDetail(kw, { position, page, geo, trend }) {
-  const countryLabel = kw.country ? (KW_COUNTRIES[kw.country] || kw.country.toUpperCase()) : 'Any';
+function rtBindFixChecks() {
+  document.querySelectorAll('.rt-fix-check').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+      rtToggleFixCheck(cb.dataset.fixKey, cb.checked);
+      var row = cb.closest('.rt-fix-item');
+      if (row) row.classList.toggle('rt-fix-done', cb.checked);
+    });
+  });
+}
 
-  let histHtml = '<span class="kw-detail-none">No position history yet \u2014 click Snapshot to record current GSC positions.</span>';
-  if (kw.history.length) {
-    const rows = [...kw.history].reverse().slice(0, 10).map((h, i, arr) => {
-      const prev  = arr[i + 1];
-      const delta = prev ? (prev.position - h.position) : 0;
-      const arrow = delta > 0 ? '<span class="kw-trend-up">\u2191' + delta + '</span>'
-                  : delta < 0 ? '<span class="kw-trend-down">\u2193' + Math.abs(delta) + '</span>'
-                  : '';
-      let dispPage = h.page || '\u2014';
-      try { dispPage = new URL(h.page).pathname; } catch {}
-      return '<tr><td>' + esc(h.date) + '</td><td><strong>#' + h.position + '</strong> ' + arrow + '</td><td class="kw-detail-page">' + esc(dispPage) + '</td></tr>';
-    }).join('');
-    histHtml = '<table class="kw-hist-table"><thead><tr><th>Date</th><th>Position</th><th>Page</th></tr></thead><tbody>' + rows + '</tbody></table>';
+function rtBindRoadmapFields() {
+  document.querySelectorAll('.rt-roadmap-textarea').forEach(function(ta) {
+    ta.addEventListener('blur', function() { rtSaveRoadmapField(ta.dataset.day, ta.value); });
+  });
+}
+
+function rtBindRoadmapGenerateBtn() {
+  var btn = document.getElementById('rt-roadmap-generate-btn');
+  if (btn) btn.addEventListener('click', rtStreamRoadmap);
+}
+
+function rtBindExportBtns() {
+  document.querySelectorAll('.rt-export-mission-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (rtCurrentMissionId) rtExportMission(rtCurrentMissionId, btn.dataset.format);
+    });
+  });
+}
+
+// ── Mission Status ────────────────────────────────────────────────────────────
+
+function rtGetMissionStatus(mission) {
+  var history = mission.history || [];
+  if (!history.length) return { label: 'Not Ranking', cls: 'rt-status-none' };
+
+  var latest = history[history.length - 1];
+  var prev   = history.length > 1 ? history[history.length - 2] : null;
+
+  if (!latest.position) return { label: 'Not Ranking', cls: 'rt-status-none' };
+
+  // Wrong page check
+  if (mission.targetPage && latest.page && rtNormPath(latest.page) !== rtNormPath(mission.targetPage)) {
+    return { label: 'Wrong Page', cls: 'rt-status-wrong' };
   }
 
-  let geoHtml = '<span class="kw-detail-none">Load crawl data to see GEO readiness for the ranking page.</span>';
-  if (geo) {
-    const bars = Object.entries(geo.breakdown).map(([k, v]) => {
-      const label = k.charAt(0).toUpperCase() + k.slice(1);
-      const clr   = v >= 70 ? '#16a34a' : v >= 50 ? '#2563eb' : '#dc2626';
-      return '<div class="kw-geo-bar-row"><span class="kw-geo-bar-label">' + esc(label) + '</span>' +
-        '<div class="kw-geo-bar-track"><div class="kw-geo-bar-fill" style="width:' + v + '%;background:' + clr + '"></div></div>' +
-        '<span class="kw-geo-bar-val">' + v + '</span></div>';
-    }).join('');
-    geoHtml = '<div class="kw-geo-bars">' + bars + '</div>';
+  var delta = (prev && prev.position && latest.position) ? prev.position - latest.position : 0;
+
+  if (latest.position <= 3) {
+    return { label: delta > 0 ? 'Top 3 ↑' : 'Top 3', cls: 'rt-status-top3' };
   }
-
-  let pagePath = '';
-  if (page) { try { pagePath = new URL(page).pathname; } catch { pagePath = page; } }
-
-  return `<div class="kw-detail-wrap">
-    <div class="kw-detail-meta">
-      <div class="kw-detail-meta-item"><span class="kw-dm-label">Keyword</span><strong>${esc(kw.keyword)}</strong></div>
-      <div class="kw-detail-meta-item"><span class="kw-dm-label">Country</span>${esc(countryLabel)}</div>
-      ${kw.targetPage ? '<div class="kw-detail-meta-item"><span class="kw-dm-label">Target Page</span>' + esc(kw.targetPage) + '</div>' : ''}
-      ${kw.tag        ? '<div class="kw-detail-meta-item"><span class="kw-dm-label">Tag</span>' + esc(kw.tag) + '</div>' : ''}
-      <div class="kw-detail-meta-item"><span class="kw-dm-label">Current Position</span>${position !== null ? '<strong>#' + position + '</strong>' : 'Not found in GSC'}</div>
-      <div class="kw-detail-meta-item"><span class="kw-dm-label">Trend</span><span class="${trend.cls}">${trend.arrow}</span></div>
-    </div>
-    <div class="kw-detail-cols">
-      <div class="kw-detail-col">
-        <div class="kw-detail-col-hd">Position History</div>
-        ${histHtml}
-      </div>
-      <div class="kw-detail-col">
-        <div class="kw-detail-col-hd">GEO Readiness${pagePath ? ' \u2014 ' + esc(pagePath) : ''}</div>
-        ${geoHtml}
-      </div>
-    </div>
-  </div>`;
-}
-
-// ── Filter dropdowns ──────────────────────────────────────────────────────────
-
-function kwPopulateFilters(kws) {
-  const countryEl = document.getElementById('kw-filter-country');
-  const tagEl     = document.getElementById('kw-filter-tag');
-  if (!countryEl || !tagEl) return;
-
-  const countries = [...new Set(kws.map(k => k.country).filter(Boolean))].sort();
-  const tags      = [...new Set(kws.map(k => k.tag).filter(Boolean))].sort();
-
-  countryEl.innerHTML = '<option value="">All Countries</option>' +
-    countries.map(v => '<option value="' + esc(v) + '"' + (v === kwFilterCountry ? ' selected' : '') + '>' + esc(KW_COUNTRIES[v] || v.toUpperCase()) + '</option>').join('');
-
-  tagEl.innerHTML = '<option value="">All Tags</option>' +
-    tags.map(v => '<option value="' + esc(v) + '"' + (v === kwFilterTag ? ' selected' : '') + '>' + esc(v) + '</option>').join('');
-
-  countryEl.value = kwFilterCountry;
-  tagEl.value     = kwFilterTag;
-}
-
-// ── Form ──────────────────────────────────────────────────────────────────────
-
-function kwOpenForm(id) {
-  const wrap  = document.getElementById('kw-form-wrap');
-  const errEl = document.getElementById('kw-form-err');
-  if (!wrap) return;
-  if (errEl) errEl.style.display = 'none';
-
-  if (id) {
-    const kw = kwLoad().find(k => k.id === id);
-    if (!kw) return;
-    const titleEl = document.getElementById('kw-form-title');
-    if (titleEl) titleEl.textContent = 'Edit Keyword';
-    document.getElementById('kw-f-id').value      = id;
-    document.getElementById('kw-f-keyword').value = kw.keyword    || '';
-    document.getElementById('kw-f-country').value = kw.country    || '';
-    document.getElementById('kw-f-target').value  = kw.targetPage || '';
-    document.getElementById('kw-f-tag').value     = kw.tag        || '';
-  } else {
-    const titleEl = document.getElementById('kw-form-title');
-    if (titleEl) titleEl.textContent = 'Add Keyword';
-    document.getElementById('kw-f-id').value      = '';
-    document.getElementById('kw-f-keyword').value = '';
-    document.getElementById('kw-f-country').value = '';
-    document.getElementById('kw-f-target').value  = '';
-    document.getElementById('kw-f-tag').value     = '';
+  if (latest.position <= 10) {
+    if (delta > 0) return { label: 'Page 1 ↑', cls: 'rt-status-p1-up' };
+    if (delta < 0) return { label: 'Page 1 ↓', cls: 'rt-status-p1-dn' };
+    return { label: 'Page 1', cls: 'rt-status-p1' };
   }
-
-  wrap.style.display = '';
-  document.getElementById('kw-f-keyword')?.focus();
+  if (latest.position <= 20) {
+    if (delta > 0) return { label: 'Page 2 ↑', cls: 'rt-status-improving' };
+    if (delta < 0) return { label: 'Page 2 ↓', cls: 'rt-status-dropping' };
+    return { label: 'Page 2', cls: 'rt-status-p2' };
+  }
+  if (delta > 0) return { label: 'Improving ↑', cls: 'rt-status-improving' };
+  if (delta < 0) return { label: 'Dropping ↓', cls: 'rt-status-dropping' };
+  return { label: 'Pos ' + latest.position, cls: 'rt-status-p3' };
 }
 
-function kwCloseForm() {
-  const wrap = document.getElementById('kw-form-wrap');
-  if (wrap) wrap.style.display = 'none';
+function rtCalcProgress(mission) {
+  var tasks = mission.tasks || [];
+  if (!tasks.length) return 0;
+  return Math.round(tasks.filter(function(t) { return t.done; }).length / tasks.length * 100);
 }
 
-function kwSaveForm() {
-  const keyword = (document.getElementById('kw-f-keyword')?.value || '').trim();
-  const errEl   = document.getElementById('kw-form-err');
+// ── Fix Completion Tracking ───────────────────────────────────────────────────
 
-  if (!keyword) {
-    if (errEl) { errEl.textContent = 'Keyword is required.'; errEl.style.display = ''; }
-    document.getElementById('kw-f-keyword')?.focus();
+var RT_FIX_LABELS = {
+  title_meta: 'Title & Meta updated',
+  h1:         'H1 tag updated',
+  intro:      'Intro paragraph updated',
+  faq:        'FAQ section added',
+  links:      'Internal links added',
+  schema:     'Schema markup added',
+  geo:        'GEO answer block added'
+};
+
+function rtRenderFixTracking(mission) {
+  var checks = mission.fixChecks || {};
+  var done   = Object.keys(RT_FIX_LABELS).filter(function(k) { return checks[k]; }).length;
+  var total  = Object.keys(RT_FIX_LABELS).length;
+
+  return '<div class="rt-fix-section">'
+    + '<div class="rt-fix-hd">Fix Completion <span class="rt-fix-count">' + done + '/' + total + '</span></div>'
+    + '<div class="rt-fix-grid">'
+    + Object.keys(RT_FIX_LABELS).map(function(key) {
+        var checked = checks[key] || false;
+        return '<label class="rt-fix-item' + (checked ? ' rt-fix-done' : '') + '">'
+          + '<input type="checkbox" class="rt-fix-check" data-fix-key="' + key + '"' + (checked ? ' checked' : '') + '/>'
+          + '<span class="rt-fix-label">' + RT_FIX_LABELS[key] + '</span>'
+          + '</label>';
+      }).join('')
+    + '</div></div>';
+}
+
+function rtToggleFixCheck(fixKey, checked) {
+  if (!rtCurrentMissionId) return;
+  var mission = rtGetMission(rtCurrentMissionId);
+  if (!mission) return;
+  if (!mission.fixChecks) mission.fixChecks = {};
+  mission.fixChecks[fixKey] = checked;
+  rtSaveMission(mission);
+  var countEl = document.querySelector('.rt-fix-count');
+  if (countEl) {
+    var done = Object.keys(RT_FIX_LABELS).filter(function(k) { return mission.fixChecks[k]; }).length;
+    countEl.textContent = done + '/' + Object.keys(RT_FIX_LABELS).length;
+  }
+}
+
+// ── 30/60/90 Roadmap ─────────────────────────────────────────────────────────
+
+function rtRenderRoadmap(mission) {
+  var roadmap = mission.roadmap || {};
+  return '<div class="rt-roadmap-section">'
+    + '<div class="rt-roadmap-hd">'
+    + '<span>📅 30/60/90-Day Roadmap</span>'
+    + '<button id="rt-roadmap-generate-btn" class="rt-run-btn">🤖 Generate Roadmap</button>'
+    + '</div>'
+    + '<div class="rt-roadmap-days">'
+    + ['30', '60', '90'].map(function(day) {
+        return '<div class="rt-roadmap-day">'
+          + '<div class="rt-roadmap-day-hd">Day ' + day + ' Goal</div>'
+          + '<textarea class="rt-roadmap-textarea" data-day="' + day
+          + '" placeholder="What should be done by day ' + day + '…" rows="5">'
+          + rtEsc(roadmap['day' + day] || '') + '</textarea>'
+          + '</div>';
+      }).join('')
+    + '</div></div>';
+}
+
+function rtSaveRoadmapField(day, value) {
+  if (!rtCurrentMissionId) return;
+  var mission = rtGetMission(rtCurrentMissionId);
+  if (!mission) return;
+  if (!mission.roadmap) mission.roadmap = {};
+  mission.roadmap['day' + day] = value;
+  rtSaveMission(mission);
+}
+
+async function rtStreamRoadmap() {
+  if (!rtCurrentData || !rtCurrentMissionId) return;
+  var btn     = document.getElementById('rt-roadmap-generate-btn');
+  var mission = rtGetMission(rtCurrentMissionId);
+  if (!mission) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+
+  var pendingTasks = (mission.tasks || []).filter(function(t) { return !t.done; }).slice(0, 8)
+    .map(function(t) { return t.priority + ': ' + t.title; }).join('\n');
+
+  var statusObj = rtGetMissionStatus(mission);
+  var payload = {
+    task:        'rank-roadmap',
+    keyword:     rtCurrentData.keyword,
+    country:     RT_COUNTRIES[rtCurrentData.country] || rtCurrentData.country || 'Any',
+    targetPage:  rtCurrentData.targetPage || '(not specified)',
+    category:    rtCurrentData.category   || '(not specified)',
+    position:    rtCurrentData.gscData.position,
+    status:      statusObj ? statusObj.label : 'Unknown',
+    pendingTasks: pendingTasks || 'None yet — run AI Diagnosis first'
+  };
+
+  try {
+    var res = await fetch('/api/agent/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok || !res.body) {
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Generate Roadmap'; }
+      return;
+    }
+
+    var reader  = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer  = '';
+    var fullText = '';
+
+    while (true) {
+      var rd = await reader.read();
+      if (rd.done) break;
+      buffer += decoder.decode(rd.value, { stream: true });
+      var lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line.startsWith('data:')) continue;
+        var raw = line.slice(5).trim();
+        if (!raw) continue;
+        try { var d = JSON.parse(raw); if (d.type === 'chunk') fullText += d.text; } catch(e) {}
+      }
+    }
+
+    // Parse sections
+    var d30 = (fullText.match(/##\s*Day 30[\s\S]*?\n([\s\S]+?)(?=##\s*Day 60|$)/i) || ['',''])[1].trim();
+    var d60 = (fullText.match(/##\s*Day 60[\s\S]*?\n([\s\S]+?)(?=##\s*Day 90|$)/i) || ['',''])[1].trim();
+    var d90 = (fullText.match(/##\s*Day 90[\s\S]*?\n([\s\S]+?)$/i) || ['',''])[1].trim();
+
+    mission.roadmap = { day30: d30, day60: d60, day90: d90 };
+    rtSaveMission(mission);
+
+    var ta30 = document.querySelector('.rt-roadmap-textarea[data-day="30"]');
+    var ta60 = document.querySelector('.rt-roadmap-textarea[data-day="60"]');
+    var ta90 = document.querySelector('.rt-roadmap-textarea[data-day="90"]');
+    if (ta30) ta30.value = d30;
+    if (ta60) ta60.value = d60;
+    if (ta90) ta90.value = d90;
+
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate'; }
+  } catch(err) {
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Generate Roadmap'; }
+  }
+}
+
+// ── Mission Dashboard ─────────────────────────────────────────────────────────
+
+function rtRenderDashboard() {
+  var panel = document.getElementById('rt-missions-panel');
+  var list  = document.getElementById('rt-missions-list');
+  if (!panel || !list) return;
+
+  var missions = rtLoad();
+  var sortEl   = document.getElementById('rt-dash-sort');
+  var sort     = sortEl ? sortEl.value : 'date';
+
+  missions.sort(function(a, b) {
+    if (sort === 'position') {
+      var ap = (a.history && a.history.length) ? (a.history[a.history.length - 1].position || 999) : 999;
+      var bp = (b.history && b.history.length) ? (b.history[b.history.length - 1].position || 999) : 999;
+      return ap - bp;
+    }
+    if (sort === 'progress') return rtCalcProgress(b) - rtCalcProgress(a);
+    if (sort === 'status') {
+      var order = { 'rt-status-top3': 0, 'rt-status-p1-up': 1, 'rt-status-p1': 2, 'rt-status-p1-dn': 3, 'rt-status-improving': 4, 'rt-status-p2': 5, 'rt-status-p3': 6, 'rt-status-dropping': 7, 'rt-status-wrong': 8, 'rt-status-none': 9 };
+      var ao = order[rtGetMissionStatus(a).cls] || 9;
+      var bo = order[rtGetMissionStatus(b).cls] || 9;
+      return ao - bo;
+    }
+    return (b.id || 0) - (a.id || 0);  // date desc
+  });
+
+  var hdrSpan = panel.querySelector('.rt-missions-hd span');
+  if (hdrSpan) hdrSpan.textContent = '📊 Mission Dashboard — ' + missions.length + ' keyword' + (missions.length !== 1 ? 's' : '');
+
+  if (!missions.length) {
+    list.innerHTML = '<div class="rt-dash-controls"></div><div class="rt-missions-empty">No saved missions yet. Analyse a keyword and click "Save as Mission" to start tracking.</div>';
+    panel.style.display = '';
+    rtRebindDashboardSort(sort);
     return;
   }
 
-  const data = {
-    keyword,
-    country:    (document.getElementById('kw-f-country')?.value || '').trim().toLowerCase(),
-    targetPage: (document.getElementById('kw-f-target')?.value  || '').trim(),
-    tag:        (document.getElementById('kw-f-tag')?.value     || '').trim(),
-  };
+  var rows = missions.map(function(m) {
+    var status  = rtGetMissionStatus(m);
+    var pct     = rtCalcProgress(m);
+    var latest  = m.history && m.history.length ? m.history[m.history.length - 1] : null;
+    var pos     = latest && latest.position ? '#' + latest.position : '—';
+    var updated = latest ? latest.date : m.createdAt;
+    var fixes   = m.fixChecks || {};
+    var fixDone = Object.keys(RT_FIX_LABELS).filter(function(k) { return fixes[k]; }).length;
 
-  const id = Number(document.getElementById('kw-f-id')?.value || 0);
-  if (id) { kwUpdate(id, data); } else { kwAdd(data); }
+    return '<div class="rt-dash-row">'
+      + '<div class="rt-dash-row-main">'
+      + '<div class="rt-dash-row-top">'
+      + '<span class="rt-dash-kw">' + rtEsc(m.keyword) + '</span>'
+      + '<span class="rt-status-badge ' + status.cls + '">' + status.label + '</span>'
+      + '</div>'
+      + (m.targetPage ? '<div class="rt-dash-page">' + rtEsc(m.targetPage) + '</div>' : '')
+      + '<div class="rt-dash-meta">'
+      + '<span>Pos: <strong>' + pos + '</strong></span>'
+      + '<span>Tasks: ' + pct + '%</span>'
+      + '<span>Fixes: ' + fixDone + '/' + Object.keys(RT_FIX_LABELS).length + '</span>'
+      + '<span class="rt-dash-upd">Updated: ' + rtEsc(updated) + '</span>'
+      + '</div>'
+      + '<div class="rt-dash-progress-wrap"><div class="rt-dash-progress-bar" style="width:' + pct + '%"></div></div>'
+      + '</div>'
+      + '<div class="rt-dash-actions">'
+      + '<button class="btn-ghost rt-sm-btn rt-mi-load-btn" data-id="' + m.id + '">▶ Load</button>'
+      + '<button class="btn-ghost rt-sm-btn rt-mi-export-btn" data-id="' + m.id + '">⬇ Export</button>'
+      + '<button class="rt-sm-btn rt-mi-delete-btn" data-id="' + m.id + '" title="Delete">✕</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
 
-  kwCloseForm();
-  kwRender();
+  list.innerHTML = '<div class="rt-dash-controls"></div>' + rows;
+  panel.style.display = '';
+  rtRebindDashboardSort(sort);
+
+  list.querySelectorAll('.rt-mi-load-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { rtLoadMission(Number(btn.dataset.id)); panel.style.display = 'none'; });
+  });
+  list.querySelectorAll('.rt-mi-export-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { rtShowExportMenu(Number(btn.dataset.id), btn); });
+  });
+  list.querySelectorAll('.rt-mi-delete-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (confirm('Delete this Ranking Mission?')) { rtDeleteMission(Number(btn.dataset.id)); rtRenderDashboard(); }
+    });
+  });
+}
+
+function rtRebindDashboardSort(currentSort) {
+  var ctrl = document.querySelector('.rt-dash-controls');
+  if (!ctrl) return;
+  ctrl.innerHTML = '<label class="rt-dash-sort-label">Sort by:</label>'
+    + '<select id="rt-dash-sort" class="rt-dash-sort-sel">'
+    + '<option value="date"' + (currentSort === 'date' ? ' selected' : '') + '>Last Added</option>'
+    + '<option value="position"' + (currentSort === 'position' ? ' selected' : '') + '>Current Position</option>'
+    + '<option value="progress"' + (currentSort === 'progress' ? ' selected' : '') + '>Progress %</option>'
+    + '<option value="status"' + (currentSort === 'status' ? ' selected' : '') + '>Status</option>'
+    + '</select>';
+  var sel = document.getElementById('rt-dash-sort');
+  if (sel) sel.addEventListener('change', rtRenderDashboard);
+}
+
+function rtShowExportMenu(id, anchorBtn) {
+  document.querySelectorAll('.rt-export-menu').forEach(function(m) { m.remove(); });
+  var menu = document.createElement('div');
+  menu.className = 'rt-export-menu';
+  menu.innerHTML = '<button class="rt-export-opt" data-format="html">HTML Report</button>'
+    + '<button class="rt-export-opt" data-format="md">Markdown Report</button>';
+  anchorBtn.parentNode.style.position = 'relative';
+  anchorBtn.parentNode.appendChild(menu);
+  menu.querySelectorAll('.rt-export-opt').forEach(function(btn) {
+    btn.addEventListener('click', function() { rtExportMission(id, btn.dataset.format); menu.remove(); });
+  });
+  setTimeout(function() {
+    document.addEventListener('click', function handler(e) {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', handler); }
+    });
+  }, 100);
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+
+function rtExportMission(id, format) {
+  var mission = rtGetMission(id);
+  if (!mission) return;
+  var content, filename, mimeType;
+  if (format === 'html') {
+    content  = rtBuildMissionHTML(mission);
+    filename = 'ranking-mission-' + mission.keyword.replace(/\s+/g, '-').toLowerCase() + '.html';
+    mimeType = 'text/html';
+  } else {
+    content  = rtBuildMissionMarkdown(mission);
+    filename = 'ranking-mission-' + mission.keyword.replace(/\s+/g, '-').toLowerCase() + '.md';
+    mimeType = 'text/markdown';
+  }
+  var blob = new Blob([content], { type: mimeType });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+function rtBuildMissionMarkdown(mission) {
+  var status = rtGetMissionStatus(mission);
+  var pct    = rtCalcProgress(mission);
+  var lines  = [];
+
+  lines.push('# Ranking Mission Report: ' + mission.keyword);
+  lines.push('');
+  lines.push('**Generated:** ' + new Date().toISOString().slice(0, 10));
+  lines.push('**Status:** ' + status.label);
+  lines.push('**Target Page:** ' + (mission.targetPage || 'Not specified'));
+  lines.push('**Category:** ' + (mission.category || 'Not specified'));
+  lines.push('**Task Progress:** ' + pct + '% complete');
+  lines.push('');
+
+  if (mission.history && mission.history.length) {
+    lines.push('## Position History');
+    lines.push('');
+    lines.push('| Date | Position | Clicks | Impressions |');
+    lines.push('|------|----------|--------|-------------|');
+    mission.history.slice().reverse().forEach(function(h) {
+      lines.push('| ' + h.date + ' | ' + (h.position ? '#' + h.position : '—') + ' | ' + (h.clicks || 0) + ' | ' + (h.impressions || 0) + ' |');
+    });
+    lines.push('');
+  }
+
+  var rm = mission.roadmap || {};
+  if (rm.day30 || rm.day60 || rm.day90) {
+    lines.push('## 30/60/90-Day Roadmap');
+    lines.push('');
+    if (rm.day30) { lines.push('### Day 30'); lines.push(rm.day30); lines.push(''); }
+    if (rm.day60) { lines.push('### Day 60'); lines.push(rm.day60); lines.push(''); }
+    if (rm.day90) { lines.push('### Day 90'); lines.push(rm.day90); lines.push(''); }
+  }
+
+  var checks = mission.fixChecks || {};
+  lines.push('## Fix Implementation');
+  lines.push('');
+  Object.keys(RT_FIX_LABELS).forEach(function(k) {
+    lines.push('- [' + (checks[k] ? 'x' : ' ') + '] ' + RT_FIX_LABELS[k]);
+  });
+  lines.push('');
+
+  if (mission.tasks && mission.tasks.length) {
+    lines.push('## Action Tasks');
+    lines.push('');
+    mission.tasks.forEach(function(t) {
+      lines.push('- [' + (t.done ? 'x' : ' ') + '] **' + t.priority + '** — ' + t.title);
+    });
+    lines.push('');
+  }
+
+  if (mission.lastDiagnosis) {
+    lines.push('## Ranking Gap Diagnosis & Blueprint');
+    lines.push('');
+    lines.push(mission.lastDiagnosis);
+    lines.push('');
+  }
+
+  if (mission.lastAutoFix) {
+    lines.push('## Auto Fix Suggestions');
+    lines.push('');
+    lines.push(mission.lastAutoFix);
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push('*Generated by SEO Audit Tool*');
+  return lines.join('\n');
+}
+
+function rtBuildMissionHTML(mission) {
+  var status = rtGetMissionStatus(mission);
+  var pct    = rtCalcProgress(mission);
+  var checks = mission.fixChecks || {};
+  var rm     = mission.roadmap   || {};
+
+  var statusColor = {
+    'rt-status-top3': '#16a34a', 'rt-status-p1-up': '#16a34a', 'rt-status-p1': '#2563eb',
+    'rt-status-p1-dn': '#d97706', 'rt-status-improving': '#16a34a', 'rt-status-p2': '#d97706',
+    'rt-status-dropping': '#dc2626', 'rt-status-wrong': '#dc2626',
+    'rt-status-p3': '#dc2626', 'rt-status-none': '#94a3b8'
+  }[status.cls] || '#64748b';
+
+  var css = 'body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:24px;color:#0f172a;line-height:1.65}'
+    + 'h1{font-size:26px;font-weight:800;border-bottom:3px solid #2563eb;padding-bottom:10px}'
+    + 'h2{font-size:18px;font-weight:700;margin-top:32px;color:#1e40af;border-bottom:1px solid #e2e8f0;padding-bottom:6px}'
+    + 'h3{font-size:15px;font-weight:700;margin-top:16px}'
+    + 'table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}'
+    + 'th,td{padding:8px 12px;border:1px solid #e2e8f0;text-align:left}'
+    + 'th{background:#f8fafc;font-weight:700;font-size:12px;color:#64748b}'
+    + '.meta-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:16px 0}'
+    + '.meta-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}'
+    + '.meta-label{font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px}'
+    + '.meta-val{font-size:16px;font-weight:700;color:#0f172a;margin-top:4px}'
+    + '.status-badge{display:inline-block;padding:3px 12px;border-radius:20px;font-size:13px;font-weight:700;background:#f0fdf4;color:' + statusColor + '}'
+    + '.progress-bar{height:8px;background:#e2e8f0;border-radius:4px;margin:8px 0}'
+    + '.progress-fill{height:100%;background:#2563eb;border-radius:4px}'
+    + '.roadmap-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:16px 0}'
+    + '.roadmap-col{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px}'
+    + '.roadmap-col h3{margin-top:0;color:#1e40af;font-size:14px}'
+    + '.fix-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}'
+    + '.fix-item{padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px;display:flex;align-items:center;gap:8px}'
+    + '.fix-done{background:#f0fdf4;border-color:#86efac}'
+    + '.task{padding:8px 14px;border-left:3px solid #e2e8f0;margin:4px 0;font-size:14px;border-radius:0 6px 6px 0}'
+    + '.task-HIGH{border-color:#dc2626}.task-MEDIUM{border-color:#f59e0b}.task-LOW{border-color:#16a34a}'
+    + '.task-done{opacity:.55;text-decoration:line-through}'
+    + 'pre{background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;overflow-x:auto;font-size:13px;white-space:pre-wrap}'
+    + 'code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:13px}'
+    + '.footer{margin-top:48px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;text-align:center}';
+
+  var body = '<h1>🎯 Ranking Mission: ' + mission.keyword + '</h1>'
+    + '<div class="meta-grid">'
+    + '<div class="meta-card"><div class="meta-label">Status</div><div class="meta-val"><span class="status-badge">' + status.label + '</span></div></div>'
+    + '<div class="meta-card"><div class="meta-label">Target Page</div><div class="meta-val">' + rtEsc(mission.targetPage || 'Not specified') + '</div></div>'
+    + '<div class="meta-card"><div class="meta-label">Category</div><div class="meta-val">' + rtEsc(mission.category || 'Not specified') + '</div></div>'
+    + '</div>'
+    + '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>'
+    + '<p style="font-size:13px;color:#64748b;margin:4px 0 0">' + pct + '% of action tasks completed</p>';
+
+  // Position history
+  if (mission.history && mission.history.length) {
+    body += '<h2>Position History</h2><table><thead><tr><th>Date</th><th>Position</th><th>Clicks</th><th>Impressions</th></tr></thead><tbody>'
+      + mission.history.slice().reverse().map(function(h) {
+          return '<tr><td>' + h.date + '</td><td><strong>' + (h.position ? '#' + h.position : '—') + '</strong></td><td>' + (h.clicks || 0) + '</td><td>' + (h.impressions || 0) + '</td></tr>';
+        }).join('')
+      + '</tbody></table>';
+  }
+
+  // Roadmap
+  if (rm.day30 || rm.day60 || rm.day90) {
+    body += '<h2>30/60/90-Day Roadmap</h2><div class="roadmap-grid">'
+      + ['30','60','90'].map(function(d) {
+          return '<div class="roadmap-col"><h3>Day ' + d + ' Goal</h3><p>' + rtEsc(rm['day'+d] || '—').replace(/\n/g, '<br>') + '</p></div>';
+        }).join('')
+      + '</div>';
+  }
+
+  // Fix tracking
+  body += '<h2>Fix Implementation</h2><div class="fix-grid">'
+    + Object.keys(RT_FIX_LABELS).map(function(k) {
+        var done = checks[k];
+        return '<div class="fix-item' + (done ? ' fix-done' : '') + '">'
+          + (done ? '✅' : '⬜') + ' ' + RT_FIX_LABELS[k] + '</div>';
+      }).join('')
+    + '</div>';
+
+  // Tasks
+  if (mission.tasks && mission.tasks.length) {
+    body += '<h2>Action Tasks</h2>'
+      + mission.tasks.map(function(t) {
+          var cls = 'task task-' + t.priority + (t.done ? ' task-done' : '');
+          return '<div class="' + cls + '">' + (t.done ? '✅ ' : '⬜ ') + '<strong>' + rtEsc(t.priority) + '</strong> — ' + rtEsc(t.title) + '</div>';
+        }).join('');
+  }
+
+  // Diagnosis (render safely)
+  if (mission.lastDiagnosis) {
+    var diagHtml = mission.lastDiagnosis
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/^## (.+)$/gm,'<h3>$1</h3>')
+      .replace(/^### (.+)$/gm,'<h4>$1</h4>')
+      .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+    body += '<h2>Ranking Gap Diagnosis &amp; Blueprint</h2><div style="border:1px solid #e2e8f0;border-radius:8px;padding:16px;font-size:14px;line-height:1.7"><p>' + diagHtml + '</p></div>';
+  }
+
+  // Auto fixes
+  if (mission.lastAutoFix) {
+    var fixHtml = mission.lastAutoFix
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/^## (.+)$/gm,'<h3>$1</h3>')
+      .replace(/```[\w]*\n([\s\S]*?)```/g,'<pre>$1</pre>')
+      .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+    body += '<h2>Auto Fix Suggestions</h2><div style="border:1px solid #e2e8f0;border-radius:8px;padding:16px;font-size:14px;line-height:1.7"><p>' + fixHtml + '</p></div>';
+  }
+
+  body += '<div class="footer">Generated by SEO Audit Tool · ' + new Date().toISOString().slice(0, 10) + '</div>';
+
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ranking Mission: ' + mission.keyword + '</title><style>' + css + '</style></head><body>' + body + '</body></html>';
+}
+
+// ── Load Mission (updated to bind new listeners) ──────────────────────────────
+
+function rtLoadMission(id) {
+  var mission = rtGetMission(id);
+  if (!mission) return;
+
+  var kwEl   = document.getElementById('rt-kw');
+  var ctrEl  = document.getElementById('rt-country');
+  var tgtEl  = document.getElementById('rt-target-url');
+  var catEl  = document.getElementById('rt-category');
+  var compEl = document.getElementById('rt-competitors');
+  if (kwEl)   kwEl.value   = mission.keyword    || '';
+  if (ctrEl)  ctrEl.value  = mission.country    || '';
+  if (tgtEl)  tgtEl.value  = mission.targetPage || '';
+  if (catEl)  catEl.value  = mission.category   || '';
+  if (compEl) compEl.value = (mission.competitors || []).join('\n');
+
+  var gscData = rtLookupGsc(mission.keyword, mission.country);
+  rtCurrentData = { keyword: mission.keyword, country: mission.country, targetPage: mission.targetPage, category: mission.category, competitors: mission.competitors || [], gscData: gscData };
+  rtCurrentDiagnosis = mission.lastDiagnosis || '';
+  rtCurrentAutoFix   = mission.lastAutoFix   || '';
+  rtCurrentMissionId = mission.id;
+
+  var gscCard = document.getElementById('rt-gsc-card');
+  var gscBody = document.getElementById('rt-gsc-body');
+  if (gscCard && gscBody) { gscCard.style.display = ''; gscBody.innerHTML = rtRenderGscCheck(gscData, mission.targetPage); }
+
+  var gapCard = document.getElementById('rt-gap-card');
+  var gapBody = document.getElementById('rt-gap-body');
+  if (gapCard && gapBody) {
+    gapCard.style.display = '';
+    gapBody.innerHTML = rtCurrentDiagnosis ? rtRenderAIOutput(rtCurrentDiagnosis) : '<div class="rt-ai-hint">Click "Run AI Diagnosis" to analyse this keyword.</div>';
+    var runBtn = document.getElementById('rt-gap-run-btn');
+    if (runBtn) runBtn.textContent = rtCurrentDiagnosis ? '🔄 Re-run Diagnosis' : '🤖 Run AI Diagnosis';
+  }
+
+  var fixCard = document.getElementById('rt-fix-card');
+  var fixBody = document.getElementById('rt-fix-body');
+  if (fixCard && fixBody) {
+    fixCard.style.display = '';
+    fixBody.innerHTML = rtCurrentAutoFix ? rtRenderAIOutput(rtCurrentAutoFix) : '<div class="rt-ai-hint">Generate copy-ready fixes for this keyword.</div>';
+    var fixBtn = document.getElementById('rt-fix-run-btn');
+    if (fixBtn) fixBtn.textContent = rtCurrentAutoFix ? '🔄 Regenerate Fixes' : '✍️ Generate Copy-Ready Fixes';
+  }
+
+  var missionCard = document.getElementById('rt-mission-card');
+  var missionBody = document.getElementById('rt-mission-body');
+  if (missionCard && missionBody) {
+    missionCard.style.display = '';
+    missionBody.innerHTML = rtRenderMissionProgress(mission);
+    rtBindTaskChecks();
+    rtBindSnapshotBtn();
+    rtBindFixChecks();
+    rtBindRoadmapFields();
+    rtBindRoadmapGenerateBtn();
+    rtBindExportBtns();
+  }
+
+  var saveMissionBtn = document.getElementById('rt-save-mission-btn');
+  if (saveMissionBtn) saveMissionBtn.textContent = '💾 Update Mission';
+
+  var inputCard = document.getElementById('rt-input-card');
+  if (inputCard) inputCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-(function initKwTracker() {
-  document.getElementById('kw-add-btn')?.addEventListener('click', () => kwOpenForm(null));
-  document.getElementById('kw-form-save')?.addEventListener('click', kwSaveForm);
-  document.getElementById('kw-form-cancel')?.addEventListener('click', kwCloseForm);
+(function initRtTracker() {
+  var analyzeBtn       = document.getElementById('rt-analyze-btn');
+  var gapRunBtn        = document.getElementById('rt-gap-run-btn');
+  var fixRunBtn        = document.getElementById('rt-fix-run-btn');
+  var saveMissionBtn   = document.getElementById('rt-save-mission-btn');
+  var kwInput          = document.getElementById('rt-kw');
+  var missionsBtn      = document.getElementById('rt-missions-btn');
+  var missionsCloseBtn = document.getElementById('rt-missions-close-btn');
 
-  document.getElementById('kw-filter-country')?.addEventListener('change', e => {
-    kwFilterCountry = e.target.value;
-    kwRender();
+  if (analyzeBtn)       analyzeBtn.addEventListener('click', rtAnalyze);
+  if (gapRunBtn)        gapRunBtn.addEventListener('click', rtStreamDiagnosis);
+  if (fixRunBtn)        fixRunBtn.addEventListener('click', rtStreamAutoFixes);
+  if (saveMissionBtn)   saveMissionBtn.addEventListener('click', rtSaveAsMission);
+
+  if (kwInput) kwInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') rtAnalyze(); });
+
+  if (missionsBtn) missionsBtn.addEventListener('click', function() {
+    var panel = document.getElementById('rt-missions-panel');
+    if (!panel) return;
+    if (panel.style.display === 'none' || !panel.style.display) { rtRenderDashboard(); } else { panel.style.display = 'none'; }
   });
 
-  document.getElementById('kw-filter-tag')?.addEventListener('change', e => {
-    kwFilterTag = e.target.value;
-    kwRender();
+  if (missionsCloseBtn) missionsCloseBtn.addEventListener('click', function() {
+    var panel = document.getElementById('rt-missions-panel');
+    if (panel) panel.style.display = 'none';
   });
-
-  document.getElementById('kw-snapshot-btn')?.addEventListener('click', () => {
-    const n   = kwSnapshotAll();
-    const msg = n > 0
-      ? 'Snapshot saved \u2014 ' + n + ' position' + (n !== 1 ? 's' : '') + ' recorded.'
-      : 'No GSC data loaded \u2014 connect GSC first to take a snapshot.';
-    kwRender();
-    alert(msg);
-  });
-
-  document.getElementById('kw-f-keyword')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') kwSaveForm();
-  });
-
-  kwRender();
 })();
+
+
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -4704,7 +5477,7 @@ function caRenderResults(keyword, rows) {
 // ── Auto-detect our page from GSC ─────────────────────────────────────────────
 
 function caAutoFillFromGsc(keyword, country) {
-  const { position, page } = kwLookupGsc(keyword, country);
+  const { position, page } = rtLookupGsc(keyword, country);
   const urlEl = document.getElementById('ca-our-url');
   const posEl = document.getElementById('ca-our-pos');
   if (page   && urlEl && !urlEl.value) urlEl.value = page;
@@ -4775,7 +5548,7 @@ async function caAnalyze() {
 
     // If our URL wasn't fetched but we have GSC + crawl data, try to fill from allPages
     if (ourUrl && !rows.find(r => r.isUs && r.status === 'ok')) {
-      const gscLookup = kwLookupGsc(keyword, country);
+      const gscLookup = rtLookupGsc(keyword, country);
       if (gscLookup.page) {
         const localPage = allPages.find(p => p.url === gscLookup.page || p.path === gscLookup.page);
         if (localPage) {
