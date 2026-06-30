@@ -566,7 +566,6 @@ function _auditBuildGroups() {
 }
 
 function exportAuditHTML() {
-  $('audit-export-menu').style.display = 'none';
   if (!allPages.length) return;
 
   const scores   = computeScores(allPages);
@@ -715,7 +714,6 @@ td{padding:10px 14px;border-top:1px solid #f3f4f6;vertical-align:top}
 }
 
 function exportAuditCSV() {
-  $('audit-export-menu').style.display = 'none';
   if (!allPages.length) return;
 
   const rows = [
