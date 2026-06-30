@@ -253,16 +253,7 @@
           <div class="summary-url" id="res-url"></div>
           <div class="summary-meta muted" id="res-meta"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
-          <button onclick="resetUI()" class="btn-secondary">New crawl</button>
-          <div class="audit-export-wrap">
-            <button class="audit-export-btn" id="audit-export-btn" onclick="showAuditExportMenu(event)">⬇ Export ▾</button>
-            <div class="audit-export-menu" id="audit-export-menu" style="display:none">
-              <button class="audit-export-opt" onclick="exportAuditHTML()">📄 HTML Report</button>
-              <button class="audit-export-opt" onclick="exportAuditCSV()">📊 CSV Spreadsheet</button>
-            </div>
-          </div>
-        </div>
+        <button onclick="resetUI()" class="btn-secondary">New crawl</button>
       </div>
 
       <div class="score-cards">
@@ -296,6 +287,21 @@
             <span class="dot dot-pass"></span>
             <strong id="cnt-pass">0</strong><span class="count-word"> passed</span>
           </div>
+        </div>
+      </div>
+
+      <!-- Download Report Bar -->
+      <div class="dl-report-bar">
+        <div class="dl-report-info">
+          <span class="dl-report-icon">📥</span>
+          <div>
+            <div class="dl-report-title">Download Audit Report</div>
+            <div class="dl-report-sub">Share with your client or developer to action the fixes</div>
+          </div>
+        </div>
+        <div class="dl-report-btns">
+          <button class="dl-btn dl-btn-html" onclick="exportAuditHTML()">📄 HTML Report</button>
+          <button class="dl-btn dl-btn-csv"  onclick="exportAuditCSV()">📊 CSV Spreadsheet</button>
         </div>
       </div>
 
