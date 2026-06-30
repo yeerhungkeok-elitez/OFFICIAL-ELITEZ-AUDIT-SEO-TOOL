@@ -253,7 +253,16 @@
           <div class="summary-url" id="res-url"></div>
           <div class="summary-meta muted" id="res-meta"></div>
         </div>
-        <button onclick="resetUI()" class="btn-secondary">New crawl</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+          <button onclick="resetUI()" class="btn-secondary">New crawl</button>
+          <div class="audit-export-wrap">
+            <button class="audit-export-btn" id="audit-export-btn" onclick="showAuditExportMenu(event)">⬇ Export ▾</button>
+            <div class="audit-export-menu" id="audit-export-menu" style="display:none">
+              <button class="audit-export-opt" onclick="exportAuditHTML()">📄 HTML Report</button>
+              <button class="audit-export-opt" onclick="exportAuditCSV()">📊 CSV Spreadsheet</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="score-cards">

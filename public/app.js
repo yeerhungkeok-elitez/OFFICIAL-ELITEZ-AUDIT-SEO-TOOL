@@ -507,6 +507,255 @@ function resetUI() {
   $('url-input').focus();
 }
 
+// ── Audit Export ──────────────────────────────────────────────────────────────
+
+function showAuditExportMenu(e) {
+  if (e) e.stopPropagation();
+  const menu = $('audit-export-menu');
+  if (!menu) return;
+  const isOpen = menu.style.display !== 'none';
+  menu.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    function closeMenu(ev) {
+      if (!menu.contains(ev.target) && ev.target.id !== 'audit-export-btn') {
+        menu.style.display = 'none';
+        document.removeEventListener('click', closeMenu);
+      }
+    }
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+}
+
+function _auditFilename(ext) {
+  const slug = (startUrl || 'report')
+    .replace(/https?:\/\//, '').replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').slice(0, 40);
+  return `seo-audit-${slug}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+}
+
+function _auditScoreColor(s) {
+  if (s >= 90) return '#16a34a';
+  if (s >= 75) return '#22c55e';
+  if (s >= 50) return '#f59e0b';
+  if (s >= 25) return '#f97316';
+  return '#dc2626';
+}
+
+function _auditScoreLabel(s) {
+  if (s >= 90) return 'Excellent';
+  if (s >= 75) return 'Strong';
+  if (s >= 50) return 'Needs Improvement';
+  if (s >= 25) return 'Poor';
+  return 'Critical';
+}
+
+function _auditBuildGroups() {
+  const groups = new Map();
+  for (const page of allPages) {
+    for (const c of [...(page.checks || []), ...(page.convChecks || [])]) {
+      if (c.status === 'info') continue;
+      const key = `${c.status}|${c.category || 'Other'}|${c.check}`;
+      if (!groups.has(key)) groups.set(key, { status: c.status, category: c.category || 'Other', check: c.check, detail: c.detail || '', pages: [] });
+      groups.get(key).pages.push({ url: page.url, path: page.path, message: c.message });
+    }
+  }
+  const order = { fail: 0, warn: 1, pass: 2 };
+  return [...groups.values()].sort((a, b) => {
+    const od = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+    return od !== 0 ? od : b.pages.length - a.pages.length;
+  });
+}
+
+function exportAuditHTML() {
+  $('audit-export-menu').style.display = 'none';
+  if (!allPages.length) return;
+
+  const scores   = computeScores(allPages);
+  const totalFail = allPages.reduce((n, p) => n + (p.issueCount?.fail || 0), 0);
+  const totalWarn = allPages.reduce((n, p) => n + (p.issueCount?.warn || 0), 0);
+  const totalPass = allPages.reduce((n, p) => n + (p.issueCount?.pass || 0), 0);
+  const date      = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const groups    = _auditBuildGroups();
+  const errors    = groups.filter(g => g.status === 'fail');
+  const warnings  = groups.filter(g => g.status === 'warn');
+
+  function renderGroups(gs, dotColor, badgeColor, badgeLabel) {
+    if (!gs.length) return '<p style="color:#888;font-style:italic;padding:8px 0">None found.</p>';
+    return gs.map(g => `
+      <div style="border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;overflow:hidden">
+        <div style="background:${badgeColor}12;padding:12px 16px;display:flex;align-items:flex-start;gap:12px;border-bottom:1px solid #e5e7eb">
+          <span style="background:${badgeColor};color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap;margin-top:3px">${badgeLabel}</span>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:14px;color:#111">${esc(g.check)}</div>
+            <div style="font-size:12px;color:#888;margin-top:2px">${g.pages.length} page${g.pages.length !== 1 ? 's' : ''} affected · ${esc(g.category)}</div>
+          </div>
+        </div>
+        ${g.detail ? `<div style="padding:10px 16px;background:#fffbeb;font-size:13px;color:#78530a;border-bottom:1px solid #fde68a">💡 <strong>How to fix:</strong> ${esc(g.detail)}</div>` : ''}
+        <div style="padding:0 16px">
+          ${g.pages.map(p => `
+            <div style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:13px">
+              <div style="color:#1d4ed8;font-weight:500">${esc(p.path || '/')}</div>
+              <div style="color:#555;margin-top:2px">${esc(p.message)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`).join('');
+  }
+
+  const pageRows = [...allPages]
+    .sort((a, b) => (b.issueCount?.fail || 0) - (a.issueCount?.fail || 0))
+    .map(p => {
+      const fail = p.issueCount?.fail ?? 0;
+      const warn = p.issueCount?.warn ?? 0;
+      const ms   = p.responseTimeMs || 0;
+      return `<tr>
+        <td>${esc(p.path || '/')}<br><small style="color:#aaa;font-size:11px">${esc(p.url)}</small></td>
+        <td style="text-align:center">${p.status || '?'}</td>
+        <td style="text-align:center;color:${fail > 0 ? '#dc2626' : '#bbb'};font-weight:${fail > 0 ? '700' : '400'}">${fail || '—'}</td>
+        <td style="text-align:center;color:${warn > 0 ? '#d97706' : '#bbb'};font-weight:${warn > 0 ? '600' : '400'}">${warn || '—'}</td>
+        <td style="text-align:center;color:${ms > 3000 ? '#dc2626' : ms > 0 ? '#333' : '#bbb'}">${ms > 0 ? ms + 'ms' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SEO Audit Report — ${esc(startUrl)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f9fafb;color:#111;line-height:1.5;font-size:15px}
+.wrap{max-width:860px;margin:0 auto;padding:48px 24px 80px}
+h2{font-size:18px;font-weight:700;color:#111;margin:36px 0 14px;padding-bottom:8px;border-bottom:2px solid #e5e7eb}
+.header-top{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:8px}
+.report-title{font-size:26px;font-weight:800;color:#111}
+.report-brand{font-size:12px;color:#aaa;margin-top:4px}
+.meta{color:#666;font-size:13px;margin-bottom:32px;line-height:1.6}
+.score-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:28px}
+.sc{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;text-align:center}
+.sc-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#999}
+.sc-num{font-size:42px;font-weight:800;line-height:1;margin:6px 0 4px}
+.sc-tier{font-size:12px;font-weight:700}
+.counts{display:flex;gap:12px;margin-bottom:32px;flex-wrap:wrap}
+.cnt{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 20px;font-size:14px;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:13px}
+th{background:#f3f4f6;padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.4px}
+td{padding:10px 14px;border-top:1px solid #f3f4f6;vertical-align:top}
+.footer{margin-top:48px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#bbb;text-align:center}
+@media print{body{background:#fff}.wrap{padding:20px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header-top">
+    <div>
+      <div class="report-title">SEO Audit Report</div>
+      <div class="report-brand">Elitez Group · SEO Audit Tool</div>
+    </div>
+    <div style="text-align:right;font-size:13px;color:#888">${date}</div>
+  </div>
+  <div class="meta">
+    <strong style="color:#111">${esc(startUrl)}</strong><br>
+    ${allPages.length} page${allPages.length !== 1 ? 's' : ''} scanned
+  </div>
+
+  <div class="score-grid">
+    <div class="sc">
+      <div class="sc-label">Overall Score</div>
+      <div class="sc-num" style="color:${_auditScoreColor(scores.overall)}">${scores.overall}</div>
+      <div class="sc-tier" style="color:${_auditScoreColor(scores.overall)}">${_auditScoreLabel(scores.overall)}</div>
+    </div>
+    <div class="sc">
+      <div class="sc-label">SEO Score</div>
+      <div class="sc-num" style="color:${_auditScoreColor(scores.seo)}">${scores.seo}</div>
+      <div class="sc-tier" style="color:${_auditScoreColor(scores.seo)}">${_auditScoreLabel(scores.seo)}</div>
+    </div>
+    <div class="sc">
+      <div class="sc-label">Pages Scanned</div>
+      <div class="sc-num" style="color:#333">${allPages.length}</div>
+    </div>
+  </div>
+
+  <div class="counts">
+    <div class="cnt"><span class="dot" style="background:#dc2626"></span><strong style="color:#dc2626">${totalFail}</strong>&nbsp;Errors</div>
+    <div class="cnt"><span class="dot" style="background:#d97706"></span><strong style="color:#d97706">${totalWarn}</strong>&nbsp;Warnings</div>
+    <div class="cnt"><span class="dot" style="background:#16a34a"></span><strong style="color:#16a34a">${totalPass}</strong>&nbsp;Passed</div>
+  </div>
+
+  <h2>🔴 Critical Errors to Fix First</h2>
+  ${renderGroups(errors, '#dc2626', '#dc2626', 'Error')}
+
+  <h2>🟡 Warnings to Address</h2>
+  ${renderGroups(warnings, '#d97706', '#d97706', 'Warning')}
+
+  <h2>📄 Page-by-Page Summary</h2>
+  <table>
+    <tr>
+      <th>Page</th>
+      <th style="text-align:center">HTTP</th>
+      <th style="text-align:center">Errors</th>
+      <th style="text-align:center">Warnings</th>
+      <th style="text-align:center">Load Time</th>
+    </tr>
+    ${pageRows}
+  </table>
+
+  <div class="footer">Generated by Elitez SEO Audit Tool · ${date}</div>
+</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = _auditFilename('html');
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportAuditCSV() {
+  $('audit-export-menu').style.display = 'none';
+  if (!allPages.length) return;
+
+  const rows = [
+    ['Page URL', 'Path', 'HTTP Status', 'Load Time (ms)', 'Category', 'Severity', 'Check', 'Message', 'How to Fix']
+  ];
+
+  for (const page of allPages) {
+    const checks = [...(page.checks || []), ...(page.convChecks || [])];
+    if (checks.length === 0) {
+      rows.push([page.url, page.path || '/', page.status || '', page.responseTimeMs || '', '', '', page.httpError || page.fetchError || '', '', '']);
+      continue;
+    }
+    for (const c of checks) {
+      if (c.status === 'info') continue;
+      rows.push([
+        page.url,
+        page.path || '/',
+        page.status || '',
+        page.responseTimeMs || '',
+        c.category || 'Other',
+        c.status === 'fail' ? 'Error' : c.status === 'warn' ? 'Warning' : 'Pass',
+        c.check,
+        c.message,
+        c.detail || ''
+      ]);
+    }
+  }
+
+  const csv = rows.map(row =>
+    row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')
+  ).join('\r\n');
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = _auditFilename('csv');
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // TOP-LEVEL SECTION NAVIGATION
 // ═════════════════════════════════════════════════════════════════════════════

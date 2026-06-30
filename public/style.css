@@ -343,6 +343,14 @@ body {
 }
 .btn-secondary:hover { background: var(--bg); }
 
+/* ── Audit Export Button ──────────────────────────────────── */
+.audit-export-wrap  { position: relative; }
+.audit-export-btn   { background: var(--primary); color: #fff; border: none; font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; white-space: nowrap; transition: opacity .15s; }
+.audit-export-btn:hover { opacity: .88; }
+.audit-export-menu  { position: absolute; top: calc(100% + 6px); right: 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.1); z-index: 100; min-width: 180px; overflow: hidden; }
+.audit-export-opt   { display: block; width: 100%; text-align: left; background: none; border: none; padding: 11px 16px; font-size: 13px; cursor: pointer; color: var(--text); transition: background .12s; }
+.audit-export-opt:hover { background: #f0f4ff; }
+
 /* ── Tabs ─────────────────────────────────────────────────── */
 .tab-bar {
   display: flex;
